@@ -151,6 +151,9 @@ Deterministic functions agents invoke.
 - `getWorkflowParams(workflowId)` — retrieve workflow template parameters
 - `readUploadedFile(fileId)` — read parsed content from `uploadStore` by ID
 - `listUploadedFiles()` — list all uploaded files with IDs, names, and types
+- `download_file(url, filename?)` — save a remote file to the user's Downloads folder via `chrome.downloads`
+- `generate_md_brief(...)` — assemble a structured prompt-engineering markdown and download it as `.md`
+- **Notion long-term memory** (10 actions, see `## 11. Notion memory` below)
 
 ---
 
@@ -594,3 +597,69 @@ chrome-extension/manifest.json            → name: "Dot", version: "0.1.0"
 
 ### Untouched
 Everything else — preserves upstream mergeability.
+
+---
+
+## 11. Notion memory
+
+Dot uses a user-supplied Notion integration as long-term memory: structured data the agent can recall and append to across sessions. Authentication is via an internal integration token entered in Settings → Notion. The user shares specific pages with the integration; Dot never sees the rest of the workspace.
+
+### 11.1 Setup (one-time, per user)
+
+1. Create an internal integration at https://www.notion.so/my-integrations → copy `secret_xxx`.
+2. Settings → Notion → paste token → **Test connection & save**.
+3. In Notion, on each page you want Dot to access: top-right `...` → Connections → Add Dot.
+4. (Optional) Settings → Notion → Pinned databases → give each frequently-used database a friendly name (e.g. "Job Tracker", "Reading List", "Contacts") so the agent can find it by name across sessions.
+5. (Optional) Auto-write toggle: OFF (default) → agent uses `human_interrupt` before any Notion write. ON → agent writes without asking.
+
+### 11.2 Actions (10)
+
+All require a configured integration token. Token is never accepted as an argument and never logged.
+
+| Action | Use case |
+|---|---|
+| `notion_search(query?, filter_type?)` | Discover pages/databases the integration can see |
+| `notion_get_pinned_db(name)` | Resolve a friendly pin name to a database UUID |
+| `notion_get_database(database_id)` | Read schema (`{ name: type }`) — call BEFORE create/update |
+| `notion_query_database(database_id, filter?, sorts?)` | Read rows with Notion's filter + sort DSL; returns flattened rows |
+| `notion_get_page(page_id)` | Read one row, flattened |
+| `notion_create_database(parent_page_id, title, schema)` | Create new structured memory; first column forced to title if missing |
+| `notion_create_page(database_id, values)` | Insert row; flat `{ field: value }` payload, types coerced from schema |
+| `notion_update_page(page_id, database_id, values)` | Patch fields; database_id required for coercion |
+| `notion_archive_page(page_id)` | Soft-delete row (recoverable from Notion trash) |
+| `notion_archive_database(database_id)` | Soft-delete entire database — destructive, confirm with user first |
+
+### 11.3 Auto-recall hint
+
+On the first `execute()` call of every `Executor` session, the executor reads `notionStore.getConfig()` and injects a `# Notion long-term memory` message into the message history (tagged as `init`, so the planner's compact slice always keeps it). The hint lists every pinned database with description and the current `autoWrite` value. This is what makes the planner naturally check Notion for recall opportunities — no explicit prompting needed.
+
+Code: `chrome-extension/src/background/agent/executor.ts:buildNotionMemoryHint()` and `Executor.maybeAddNotionMemoryHint()`. Hint is a no-op when no token is set.
+
+### 11.4 Property coercion
+
+The agent never has to know Notion's verbose wire format. `notion_create_page` and `notion_update_page` accept a flat `{ field: value }` map; `coerceValuesUsingSchema` (in `chrome-extension/src/background/services/notion.ts`) maps each value to the right Notion shape using the cached schema:
+
+```
+"Position": "Senior Backend Engineer"            -> { title: [{ type:'text', text:{ content:'...' } }] }
+"Status":   "To apply"                            -> { select: { name: 'To apply' } }
+"Date Posted": "2026-03-15"                       -> { date: { start: '2026-03-15' } }
+"Skills Match": ["Go", "Kafka"]                   -> { multi_select: [{ name:'Go' }, { name:'Kafka' }] }
+"Active":   true                                  -> { checkbox: true }
+```
+
+Unknown fields are dropped with a warning; null/undefined skipped.
+
+### 11.5 Patterns
+
+**Job tracker** — `Position (title)`, `Company (text)`, `URL (url)`, `Status (select: To apply/Applied/Interviewing/Offer/Rejected)`, `Date Posted (date)`, `Location (text)`, `Salary (text)`, `Skills Match (multi_select)`, `Notes (text)`. Combine with `search_google` + `open_tab` + `extract` for one row per posting; pair with `generate_md_brief` to produce per-posting resume-tailoring instructions.
+
+**Reading list** — `Title (title)`, `URL (url)`, `Status (select: Queued/Reading/Done)`, `Tags (multi_select)`, `Notes (text)`.
+
+**Contacts** — `Name (title)`, `Email (email)`, `Phone (phone_number)`, `Role (text)`, `Last contacted (date)`, `Notes (text)`.
+
+### 11.6 Safety invariants
+
+- Token egress: every Notion API call goes through `NotionClient` in the background service worker. The options page never talks to `api.notion.com` directly.
+- Token never enters the LLM prompt, action arguments, error messages, chat events, or logs.
+- `autoWrite=false` is the safe default; first-time users won't have anything written to Notion without explicit confirmation.
+- Archive (not delete): Notion has no true delete. `notion_archive_*` actions are recoverable from the user's Notion trash.

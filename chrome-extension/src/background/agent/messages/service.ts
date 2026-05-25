@@ -205,6 +205,17 @@ export default class MessageManager {
   }
 
   /**
+   * Adds a Notion-memory hint as an init-tagged HumanMessage. The hint stays in the
+   * compact planner slice (init messages are always preserved by getMessagesForPlanner)
+   * so the planner remembers what long-term memory is available across steps.
+   */
+  public addNotionMemoryHint(content: string): void {
+    if (!content.trim()) return;
+    const msg = new HumanMessage({ content });
+    this.addMessageWithTokens(msg, 'init');
+  }
+
+  /**
    * Adds a state message to the history
    * @param stateMessage - The HumanMessage object containing the state
    */
