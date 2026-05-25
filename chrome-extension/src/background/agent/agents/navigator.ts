@@ -359,8 +359,8 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
   private fixActions(response: this['ModelOutput']): Record<string, unknown>[] {
     let actions: Record<string, unknown>[] = [];
     if (Array.isArray(response.action)) {
-      // if the item is null, skip it
-      actions = response.action.filter((item: unknown) => item !== null);
+      // Filter null AND undefined (item != null catches both via loose equality).
+      actions = response.action.filter((item: unknown) => item != null);
       if (actions.length === 0) {
         logger.warning('No valid actions found', response.action);
       }
@@ -380,11 +380,20 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
           throw new Error('Invalid action output format');
         }
       }
-    } else {
-      // if the action is neither an array nor a string, it should be an object
+    } else if (response.action && typeof response.action === 'object') {
+      // Single action object — wrap it.
       actions = [response.action];
+    } else {
+      // response.action is null/undefined/primitive — nothing executable.
+      logger.warning('Action field is missing or not an object/array', response.action);
+      actions = [];
     }
-    return actions;
+
+    // Final sanity pass: drop anything that's not a real object so the loop in
+    // doMultiAction never hits "Cannot convert undefined or null to object".
+    return actions.filter(
+      (item): item is Record<string, unknown> => item != null && typeof item === 'object' && !Array.isArray(item),
+    );
   }
 
   private async doMultiAction(
@@ -403,6 +412,13 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
     await browserContext.removeHighlight();
 
     for (const [i, action] of actions.entries()) {
+      // Defensive: fixActions already filters these, but if anything upstream slips a
+      // null/undefined/non-object into the array, Object.keys() would throw the cryptic
+      // "Cannot convert undefined or null to object" — skip it silently instead.
+      if (action == null || typeof action !== 'object') {
+        logger.warning(`Skipping non-object action at index ${i}`, action);
+        continue;
+      }
       const actionName = Object.keys(action)[0];
       const actionArgs = action[actionName];
       try {
