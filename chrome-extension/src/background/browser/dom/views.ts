@@ -305,7 +305,7 @@ export class DOMElementNode extends DOMBaseNode {
 
           if (text) {
             // Add space before >text only if there were NO attributes added before
-            const trimmedText = text.trim();
+            const trimmedText = capTextLength(text.trim(), 80);
             if (!attributesHtmlStr) {
               line += ' ';
             }
@@ -332,7 +332,10 @@ export class DOMElementNode extends DOMBaseNode {
         }
 
         if (node.parent && node.parent.isVisible && node.parent.isTopElement) {
-          formattedText.push(`${depthStr}${node.text}`);
+          const nodeText = node.text.trim();
+          if (nodeText) {
+            formattedText.push(`${depthStr}${capTextLength(nodeText, 60)}`);
+          }
         }
       }
     };

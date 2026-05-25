@@ -213,3 +213,77 @@ export const waitActionSchema: ActionSchema = {
     seconds: z.number().int().default(3).describe('amount of seconds'),
   }),
 };
+
+// Dot Custom Tools
+export const getProfileFieldActionSchema: ActionSchema = {
+  name: 'get_profile_field',
+  description:
+    'Read a field from the user profile store (name, email, phone, location, skills, education, experience, links)',
+  schema: z.object({
+    field: z.string().describe('the profile field to read (e.g. name, email, phone, location, skills)'),
+  }),
+};
+
+export const saveResultsActionSchema: ActionSchema = {
+  name: 'save_results',
+  description: 'Save extracted data to the results store for later review',
+  schema: z.object({
+    type: z.enum(['job', 'research', 'extraction']).describe('category of the result'),
+    data: z.string().describe('the extracted data as a JSON string or plain text'),
+  }),
+};
+
+export const humanInterruptActionSchema: ActionSchema = {
+  name: 'human_interrupt',
+  description: 'Pause execution and prompt the user for input or confirmation before continuing',
+  schema: z.object({
+    reason: z.string().describe('reason for interrupting and what the user should do'),
+    url: z.string().describe('current URL where the interrupt is triggered'),
+  }),
+};
+
+export const getWorkflowParamsActionSchema: ActionSchema = {
+  name: 'get_workflow_params',
+  description: 'Retrieve the template parameters for a named workflow',
+  schema: z.object({
+    workflowId: z.string().describe('identifier of the workflow (e.g. job-search, research, extract, fill-forms)'),
+  }),
+};
+
+export const readUploadedFileActionSchema: ActionSchema = {
+  name: 'read_uploaded_file',
+  description: 'Read the parsed text content of a file that the user has uploaded',
+  schema: z.object({
+    fileId: z.string().describe('the ID of the uploaded file to read'),
+  }),
+};
+
+export const listUploadedFilesActionSchema: ActionSchema = {
+  name: 'list_uploaded_files',
+  description: 'List all files the user has uploaded, returning their IDs, names, and types',
+  schema: z.object({}),
+};
+
+export const fetchUrlActionSchema: ActionSchema = {
+  name: 'fetch_url',
+  description:
+    'Make an HTTP request from the current page context, inheriting its session cookies and authentication. Use this to call backend API endpoints that the website itself uses (same-origin requests), enabling faster and more complete data extraction than DOM scraping. Ideal for sites like LinkedIn, GitHub, Twitter where internal APIs are available.',
+  schema: z.object({
+    url: z.string().describe('the full URL of the API endpoint to call'),
+    method: z.string().default('GET').describe('HTTP method: GET, POST, PUT, DELETE'),
+    headers: z.record(z.string()).optional().describe('additional request headers as key-value pairs'),
+    body: z.string().optional().describe('request body for POST/PUT requests (JSON string)'),
+  }),
+};
+
+export const openAiChatActionSchema: ActionSchema = {
+  name: 'open_ai_chat',
+  description:
+    'Open an AI chat assistant in a new tab to perform tasks like generating documents, synthesizing information, or writing content. Preferred provider order: gemini → claude → chatgpt → deepseek. After opening, use input_text to enter the prompt.',
+  schema: z.object({
+    provider: z
+      .enum(['gemini', 'claude', 'chatgpt', 'deepseek'])
+      .default('gemini')
+      .describe('which AI assistant to open (default: gemini)'),
+  }),
+};

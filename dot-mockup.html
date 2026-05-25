@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dot — Side Panel Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;1,300&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root,[data-t="light"]{
+  --bg:#EBEBEB;--sf:#E2E2E0;--tx:#1A1A1A;--mu:#8A8A88;--ln:rgba(0,0,0,0.09);
+  --ac:#C45A2D;--ac-m:rgba(196,90,45,0.10);
+  --gl:rgba(255,255,255,0.45);--gb:rgba(255,255,255,0.65);--ib:rgba(255,255,255,0.50);
+}
+[data-t="dark"]{
+  --bg:#0C0C0C;--sf:#161616;--tx:#E8E6E1;--mu:#6B6B68;--ln:rgba(255,255,255,0.07);
+  --ac:#D4714A;--ac-m:rgba(212,113,74,0.12);
+  --gl:rgba(24,24,22,0.55);--gb:rgba(255,255,255,0.05);--ib:rgba(255,255,255,0.04);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{display:flex;justify-content:center;align-items:center;min-height:100vh;background:#d0d0d0;font-family:'Manrope',sans-serif}
+.r{background:var(--bg);color:var(--tx);width:400px;height:720px;position:relative;overflow:hidden;transition:background .3s,color .3s}
+
+.tb{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--ln);background:var(--bg)}
+.bm{display:flex;align-items:center;gap:8px}
+.bm-sq{width:8px;height:8px;background:var(--ac)}
+.bm-tx{font-family:monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;color:var(--tx)}
+.bm-tx span{color:var(--mu);font-weight:400}
+.tb-r{display:flex;gap:8px;align-items:center}
+.ld{width:6px;height:6px;border-radius:50%;background:var(--ac);display:none}
+.ld.on{display:block;animation:pl 2s infinite}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.3}}
+.bt{background:none;border:1px solid var(--ln);padding:4px 10px;color:var(--mu);cursor:pointer;font-family:monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em;transition:border-color .2s,color .2s}
+.bt:hover{border-color:var(--ac);color:var(--ac)}
+
+.bw{padding:24px 20px 100px 20px;overflow-y:auto;height:calc(720px - 48px)}
+.bw::-webkit-scrollbar{width:4px}
+.bw::-webkit-scrollbar-track{background:transparent}
+.bw::-webkit-scrollbar-thumb{background:var(--ln);border-radius:2px}
+
+.bs{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:380px;text-align:center;gap:14px}
+.bs-tag{font-family:monospace;font-size:8px;color:var(--ac);text-transform:uppercase;letter-spacing:.25em;background:var(--ac-m);padding:4px 14px;border-radius:20px}
+.bs-h{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:300;letter-spacing:-.01em;line-height:1.15;color:var(--tx)}
+.bs-h em{font-style:italic;font-weight:300}
+.bs-sub{font-family:monospace;font-size:9px;color:var(--mu);text-transform:uppercase;letter-spacing:.15em;max-width:300px;line-height:1.8}
+.bp{width:48px;height:48px;border-radius:50%;border:1px solid var(--ln);background:var(--gl);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--mu);font-size:16px;transition:border-color .2s,color .2s}
+.bp:hover{border-color:var(--ac);color:var(--ac)}
+
+.ca{display:none;flex-direction:column;gap:16px}
+.am{display:flex;gap:10px;align-items:flex-start}
+.av{width:28px;height:28px;border-radius:4px;background:var(--gl);backdrop-filter:blur(16px);border:1px solid var(--ln);display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:9px;font-weight:700;color:var(--mu);flex-shrink:0}
+.av.on{border-color:var(--ac);color:var(--ac)}
+.mb{background:var(--gl);backdrop-filter:blur(16px);border:1px solid var(--gb);border-radius:2px 4px 4px 4px;padding:14px 16px;max-width:calc(100% - 44px)}
+.ml{font-family:monospace;font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:var(--ac);margin-bottom:6px;font-weight:700}
+.mt{font-size:13px;line-height:1.65;color:var(--tx)}
+.mt code{font-family:monospace;font-size:11px;background:rgba(0,0,0,0.04);padding:1px 5px;border-radius:2px}
+[data-t="dark"] .mt code{background:rgba(255,255,255,0.06)}
+
+.um{display:flex;justify-content:flex-end}
+.ub{background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:4px 4px 2px 4px;font-size:13px;line-height:1.5;max-width:75%}
+
+.wp{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.wl{font-family:monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:5px 12px;border-radius:4px;border:1px solid var(--ln);background:transparent;color:var(--mu);cursor:pointer;transition:border-color .2s,color .2s}
+.wl:hover{border-color:var(--ac);color:var(--ac)}
+
+.sr{display:flex;align-items:center;gap:10px;padding:10px 16px;border-left:2px solid var(--ac);background:transparent}
+.sd{width:6px;height:6px;border-radius:50%;background:var(--ac);animation:pl 1.2s infinite}
+.st{font-family:monospace;font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.08em}
+
+.rc{background:var(--gl);backdrop-filter:blur(16px);border:1px solid var(--gb);border-radius:4px;padding:16px;margin-top:8px}
+.rh{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.rht{font-family:monospace;font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:var(--mu);font-weight:700}
+.rhc{font-family:monospace;font-size:9px;color:var(--bg);background:var(--ac);padding:2px 8px;border-radius:4px;font-weight:700}
+.rr{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--ln);cursor:pointer;transition:background .2s}
+.rr:hover{background:rgba(0,0,0,0.02)}
+[data-t="dark"] .rr:hover{background:rgba(255,255,255,0.02)}
+.rr:last-child{border:none}
+.rj{font-size:12.5px;font-weight:500;color:var(--tx)}
+.rco{font-family:monospace;font-size:10px;color:var(--mu);margin-top:1px}
+.rtg{font-family:monospace;font-size:8px;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:4px;color:var(--ac);background:var(--ac-m);font-weight:700}
+
+.ib{position:absolute;bottom:0;left:0;right:0;padding:16px 20px;background:var(--bg);border-top:1px solid var(--ln)}
+.iw{display:flex;gap:8px;align-items:center}
+.iw input{flex:1;background:var(--ib);backdrop-filter:blur(16px);border:1px solid var(--ln);border-radius:4px;padding:10px 14px;font-family:'Manrope',sans-serif;font-size:13px;color:var(--tx);outline:none;transition:border-color .2s}
+.iw input::placeholder{color:var(--mu);font-family:monospace;font-size:9px;text-transform:uppercase;letter-spacing:.08em}
+.iw input:focus{border-color:var(--ac)}
+.sb{width:32px;height:32px;border-radius:4px;border:none;background:var(--ac);display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:13px;font-weight:700;transition:opacity .2s}
+.sb:hover{opacity:.85}
+</style>
+</head>
+<body>
+<div class="r" data-t="light" id="p">
+  <div class="tb">
+    <div class="bm"><div class="bm-sq"></div><div class="bm-tx">DOT <span>/ v0.1</span></div></div>
+    <div class="tb-r">
+      <div class="ld" id="ld"></div>
+      <button class="bt" onclick="tt()">DARK</button>
+    </div>
+  </div>
+  <div class="bw" id="bw">
+    <div class="bs" id="bs">
+      <div class="bs-tag">Personal web agent</div>
+      <div class="bs-h">Ready when<br>you <em>are</em>.</div>
+      <div class="bs-sub">Autonomous browsing, extraction &amp; task execution — running locally in your browser</div>
+      <div class="bp" onclick="go()" id="pw">⏻</div>
+      <div class="bs-sub" style="font-size:8px;letter-spacing:.25em;margin-top:-4px">Initialize</div>
+    </div>
+    <div class="ca" id="ca">
+      <div class="am">
+        <div class="av on">P</div>
+        <div class="mb">
+          <div class="ml">Planner</div>
+          <div class="mt">System online. What are we doing?</div>
+          <div class="wp">
+            <div class="wl" onclick="wf('jobs')">Job search</div>
+            <div class="wl" onclick="wf('research')">Research</div>
+            <div class="wl" onclick="wf('extract')">Extract data</div>
+            <div class="wl" onclick="wf('forms')">Fill forms</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="ib" id="ib" style="display:none">
+    <div class="iw">
+      <input type="text" placeholder="Describe your task..." id="ti" onkeydown="if(event.key==='Enter')send()">
+      <div class="sb" onclick="send()">→</div>
+    </div>
+  </div>
+</div>
+<script>
+function tt(){const p=document.getElementById('p'),n=p.getAttribute('data-t')==='light'?'dark':'light';p.setAttribute('data-t',n);document.querySelector('.bt').textContent=n==='dark'?'LIGHT':'DARK';document.body.style.background=n==='dark'?'#000':'#d0d0d0'}
+function go(){
+  document.getElementById('pw').style.borderColor='var(--ac)';
+  document.getElementById('pw').style.color='var(--ac)';
+  setTimeout(()=>{
+    document.getElementById('bs').style.display='none';
+    document.getElementById('ca').style.display='flex';
+    document.getElementById('ib').style.display='block';
+    document.getElementById('ld').classList.add('on');
+  },300);
+}
+function wf(t){
+  const c=document.getElementById('ca');
+  const l={jobs:'Job search',research:'Research',extract:'Extract data',forms:'Fill forms'};
+  c.innerHTML+=`<div class="um"><div class="ub">${l[t]}</div></div>`;
+  if(t==='jobs'){
+    setTimeout(()=>{c.innerHTML+=`<div class="am"><div class="av">N</div><div class="mb"><div class="ml">Navigator</div><div class="mt">Navigating to <code>indeed.com</code> — searching "junior developer" in Regina, SK.</div></div></div>`;},300);
+    setTimeout(()=>{c.innerHTML+=`<div class="sr"><div class="sd"></div><div class="st">Navigator — extracting results · 7 of 10</div></div>`;},900);
+    setTimeout(()=>{c.innerHTML+=`<div class="am"><div class="av on">V</div><div class="mb"><div class="ml">Validator</div><div class="mt">10 results validated. All URLs resolve. Data structure complete.</div></div></div>`;},1500);
+    setTimeout(()=>{c.innerHTML+=`<div class="am"><div class="av on">P</div><div class="mb"><div class="ml">Planner</div><div class="mt">Extraction complete. 10 listings saved.</div><div class="rc"><div class="rh"><div class="rht">Saved results</div><div class="rhc">10</div></div><div class="rr"><div><div class="rj">Junior Software Developer</div><div class="rco">SaskTel — Regina, SK · $55k–$68k</div></div><div class="rtg">New</div></div><div class="rr"><div><div class="rj">Full Stack Developer I</div><div class="rco">ISM Canada — Regina, SK · $60k–$75k</div></div><div class="rtg">2d</div></div><div class="rr"><div><div class="rj">Data Analyst (Entry Level)</div><div class="rco">University of Regina — Regina, SK</div></div><div class="rtg">5d</div></div></div></div></div>`;},2100);
+  } else if(t==='forms'){
+    setTimeout(()=>{c.innerHTML+=`<div class="am"><div class="av">N</div><div class="mb"><div class="ml">Navigator</div><div class="mt">Send me the URL. I'll map your profile fields to the form.</div></div></div>`;},300);
+  } else {
+    setTimeout(()=>{c.innerHTML+=`<div class="am"><div class="av on">P</div><div class="mb"><div class="ml">Planner</div><div class="mt">Describe the ${l[t].toLowerCase()} task.</div></div></div>`;},300);
+  }
+  document.getElementById('ti').focus();
+}
+function send(){
+  const i=document.getElementById('ti');if(!i.value.trim())return;
+  const c=document.getElementById('ca');
+  c.innerHTML+=`<div class="um"><div class="ub">${i.value}</div></div>`;
+  i.value='';
+  setTimeout(()=>{c.innerHTML+=`<div class="am"><div class="av on">P</div><div class="mb"><div class="ml">Planner</div><div class="mt">Understood. Decomposing into sub-tasks.</div></div></div>`;},300);
+  setTimeout(()=>{c.innerHTML+=`<div class="sr"><div class="sd"></div><div class="st">Navigator — executing step 1 of 3</div></div>`;},800);
+}
+</script>
+</body>
+</html>

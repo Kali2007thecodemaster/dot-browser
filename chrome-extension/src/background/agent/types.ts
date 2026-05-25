@@ -49,6 +49,7 @@ export class AgentContext {
   stateMessageAdded: boolean;
   history: AgentStepHistory;
   finalAnswer: string | null;
+  hasClaimedTab: boolean;
 
   constructor(
     taskId: string,
@@ -73,6 +74,7 @@ export class AgentContext {
     this.stateMessageAdded = false;
     this.history = new AgentStepHistory();
     this.finalAnswer = null;
+    this.hasClaimedTab = false;
   }
 
   async emitEvent(actor: Actors, state: ExecutionState, eventDetails: string) {

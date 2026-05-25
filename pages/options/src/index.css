@@ -2,10 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --bg: #ebebeb;
+  --text: #1a1a1a;
+  --accent: #c45a2d;
+  --glass: rgba(255, 255, 255, 0.5);
+  --glass-border: rgba(255, 255, 255, 0.75);
+  --line: rgba(0, 0, 0, 0.09);
+  --muted: rgba(26, 26, 26, 0.45);
+  --surface: rgba(255, 255, 255, 0.65);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0c0c;
+    --text: #e8e6e1;
+    --accent: #d4714a;
+    --glass: rgba(24, 24, 22, 0.6);
+    --glass-border: rgba(255, 255, 255, 0.05);
+    --line: rgba(255, 255, 255, 0.07);
+    --muted: rgba(232, 230, 225, 0.4);
+    --surface: rgba(24, 24, 22, 0.8);
+  }
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans',
-    'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'Manrope', sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  background: var(--surface);
+  border-radius: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  color: var(--accent);
+}
+
+input, select, textarea {
+  font-family: 'Manrope', sans-serif;
 }

@@ -1,291 +1,596 @@
-# CLAUDE.md
+# CLAUDE.md — Dot Build Specification
 
-This file provides guidance to AI coding assistants (e.g., Claude Code, GitHub Copilot, Cursor) when working with this repository.
+> **Project**: Dot — Personal AI web agent (Nanobrowser fork)
+> **Author**: Juan Kali — University of Regina, B.Sc. Math & CS
+> **Stack**: TypeScript · React 18 · Tailwind · Vite · Puppeteer · LangChain.js · Chrome MV3
+> **Upstream**: https://github.com/nanobrowser/nanobrowser (Apache 2.0)
 
-## Project Overview
+---
 
-Nanobrowser is an open-source AI web automation Chrome extension that runs multi-agent systems locally in the browser. It's a free alternative to OpenAI Operator with support for multiple LLM providers (OpenAI, Anthropic, Gemini, Ollama, etc.).
+## 0. Operator Rules
 
-## Development Commands
+Non-negotiable. Follow on every task.
 
-**Package Manager**: Always use `pnpm` (required, configured in Cursor rules)
+### 0.1 Planning
+- **Before writing any code**, output a numbered plan with file paths + one-line descriptions
+- Plans touching 3+ files → require human approval (`y/n`) before execution
+- Plans touching config files → always require approval:
+  `turbo.json`, `pnpm-workspace.yaml`, `tsconfig*`, `manifest.json`, `package.json`
 
-**Core Commands**:
+### 0.2 Communication
+- Bullet points over paragraphs for all reports, summaries, status updates
+- One line per bullet (two max)
+- Cite file paths relative to repo root: `chrome-extension/src/background/agent/planner.ts`
+- Never say "I'll now..." — execute, then report what was done
 
-- `pnpm install` - Install dependencies
-- `pnpm dev` - Start development mode with hot reload
-- `pnpm build` - Build production version
-- `pnpm type-check` - Run TypeScript type checking
-- `pnpm lint` - Run ESLint with auto-fix
-- `pnpm prettier` - Format code with Prettier
+### 0.3 Verification
+- Never claim a feature works without proof
+- Logic → run `pnpm -F <workspace> type-check`, show output
+- UI → describe expected visual state after change
+- Build → run `pnpm build`, confirm exit code 0
+- Tests → run `pnpm -F chrome-extension test`, show pass/fail
 
-**Testing**:
+### 0.4 Clarifying Questions
+- **Ask before** implementing when:
+  - Task is ambiguous about user-facing behavior
+  - Two valid approaches with different tradeoffs
+  - A new dependency needs to be added
+  - A file rename/move/delete is involved
+- **Do not ask** when:
+  - Task is clear and approach is obvious
+  - Answer is in this file, in upstream CLAUDE.md, or in the codebase
+  - Action is read-only (list files, type-check, lint, build)
 
-- `pnpm e2e` - Run end-to-end tests (builds and zips first)
-- `pnpm zip` - Create extension zip for distribution
-- `pnpm -F chrome-extension test` - Run unit tests (Vitest) for core extension
-  - Targeted example: `pnpm -F chrome-extension test -- -t "Sanitizer"`
+### 0.5 Git
+- Atomic commits: one concern per commit
+- Format: `feat(scope): description` / `fix(scope):` / `refactor(scope):`
+- Present tense ("Add feature" not "Added feature")
+- Scopes: `ui`, `agent`, `storage`, `workflow`, `config`, `build`
+- Never commit: `dist/`, `node_modules/`, `.env`, `.env.local`
+- Branch: `feat/short-description`, `fix/short-description`
 
-### Workspace Tips
+### 0.6 Upstream Change Policy (from Nanobrowser CLAUDE.md)
+- **Allowed without asking**: read/list files, workspace-scoped lint/format/type-check/build, small focused patches
+- **Ask first**: new dependencies, file renames/moves/deletes, global/workspace config changes
+- **Do not edit**: `dist/**`, `build/**`, `packages/i18n/lib/**` (generated outputs)
+- **Do not modify without approval**: `turbo.json`, `pnpm-workspace.yaml`, `tsconfig*`
+- **Reuse**: `packages/ui` components and `packages/tailwind-config` tokens — do not reinvent
+- **Only use scripts defined in `package.json`** — do not invent new commands
 
-- Scope tasks to a single workspace to speed up runs:
-  - `pnpm -F chrome-extension build`
-  - `pnpm -F packages/ui lint`
-- Prefer workspace-scoped commands over root-wide runs when possible.
+### 0.7 Safety
+- Never log, commit, or expose API keys
+- Use `.env.local` (git-ignored) for secrets, prefix with `VITE_`
+- All user data stays in Chrome local storage — no external calls except LLM providers
+- No `eval()` or dynamic code execution
+- Sanitize content before rendering (XSS prevention)
+- Validate URLs to prevent malicious redirects
 
-Targeted examples (fast path):
-- `pnpm -F pages/side-panel build` — build only the side panel
-- `pnpm -F chrome-extension dev` — dev-watch background/service worker
-- `pnpm -F packages/storage type-check` — TS checks for storage package
-- `pnpm -F pages/side-panel lint -- src/components/ChatInput.tsx` — lint a file
-- `pnpm -F chrome-extension prettier -- src/background/index.ts` — format a file
+---
 
-**Cleaning**:
+## 1. Project Overview
 
-- `pnpm clean` - Clean all build artifacts and node_modules
-- `pnpm clean:bundle` - Clean just build outputs
-- `pnpm clean:turbo` - Clear Turbo state/cache
-- `pnpm clean:node_modules` - Remove dependencies in current workspace
-- `pnpm clean:install` - Clean node_modules and reinstall dependencies
-- `pnpm update-version` - Update version across all packages
+Dot is a personal fork of Nanobrowser — an open-source Chrome Extension for AI-powered web automation. It adds:
 
-## Architecture
+- **Custom UI theme**: Industrial brutalist + glassmorphism, 3-color palette (beige/black/burnt amber), dark mode
+- **Boot ritual**: Manual "power on" before agent initialization (cost control gate)
+- **Profile store**: Structured personal data for auto-filling forms
+- **Workflow modules**: Pre-built parameterized task templates (job search, research, extraction, form filling)
+- **Results store**: Persistent structured output from agent extractions
+- **File uploads**: Attach `.md` and `.pdf` files to tasks — parsed and injected into agent context
 
-This is a **monorepo** using **Turbo** for build orchestration and **pnpm workspaces**.
+### 1.1 Design Language
 
-### Workspace Structure
+| Token | Light Mode | Dark Mode |
+|-------|-----------|-----------|
+| `--bg` (ground) | `#EBEBEB` | `#0C0C0C` |
+| `--text` (ink) | `#1A1A1A` | `#E8E6E1` |
+| `--accent` (burnt amber) | `#C45A2D` | `#D4714A` |
+| `--glass` | `rgba(255,255,255,0.5)` | `rgba(24,24,22,0.6)` |
+| `--glass-b` | `rgba(255,255,255,0.75)` | `rgba(255,255,255,0.05)` |
+| `--line` | `rgba(0,0,0,0.09)` | `rgba(255,255,255,0.07)` |
 
-**Core Extension**:
+- **Fonts**: Manrope (body), Cormorant Garamond (display headings), monospace (labels/status)
+- **Glassmorphism**: `backdrop-filter: blur(20px) saturate(140%)` on all cards/bubbles
+- **Labels**: `font-family: monospace; text-transform: uppercase; letter-spacing: 0.12em; font-size: 9px`
+- **Agent avatars**: 28×28px, `border-radius: 6px` (squared), monospace initial
 
-- `chrome-extension/` - Main Chrome extension manifest and background scripts
-  - `src/background/` - Background service worker with multi-agent system
-  - `src/background/agent/` - AI agent implementations (Navigator, Planner, Validator)
-  - `src/background/browser/` - Browser automation and DOM manipulation
+---
 
-**UI Pages** (`pages/`):
+## 2. Architecture — The Three Layers
 
-- `side-panel/` - Main chat interface (React + TypeScript + Tailwind)
-- `options/` - Extension settings page (React + TypeScript)
-- `content/` - Content script for page injection
+### Layer 1: Workflows (Orchestration)
 
-**Shared Packages** (`packages/`):
+Deterministic sequences that define task structure.
 
-- `shared/` - Common utilities and types
-- `storage/` - Chrome extension storage abstraction
-- `ui/` - Shared React components
-- `schema-utils/` - Validation schemas
-- `i18n/` - Internationalization
-- Others: `dev-utils/`, `zipper/`, `vite-config/`, `tailwind-config/`, `hmr/`,
-  `tsconfig/`
+```
+User input → Boot Gate → Workflow Selection → Task Template → Executor → Result
+```
 
-### Multi-Agent System
+| Workflow | Parameters | Output |
+|----------|------------|--------|
+| `job-search` | `site`, `query`, `location`, `count` | `JobListing[]` → `resultsStore` |
+| `research` | `topic`, `sources[]`, `depth` | Markdown summary + URLs |
+| `extract` | `url`, `instruction`, `format` | Structured JSON → `resultsStore` |
+| `fill-forms` | `url`, `formType` | Form filled, paused at submit (HITL) |
+| `custom` | Raw task string | Agent-determined |
 
-The core AI system consists of three specialized agents:
+Workflow files: `chrome-extension/src/background/workflows/`
 
-- **Navigator** - Handles DOM interactions and web navigation
-- **Planner** - High-level task planning and strategy
-- **Validator** - Validates task completion and results
+### Layer 2: Agents (Reasoning)
 
-Agent logic is under `chrome-extension/src/background/agent/`.
+LLM-powered decision makers. Nanobrowser has **three** agents:
 
-### Build System
+| Agent | Role | Source |
+|-------|------|--------|
+| **PlannerAgent** | Decomposes objectives into sub-tasks, generates strategy, handles replanning | `chrome-extension/src/background/agent/planner.ts` |
+| **NavigatorAgent** | Executes browser actions, reads DOM state, generates action sequences | `chrome-extension/src/background/agent/navigator.ts` |
+| **ValidatorAgent** | Validates task completion, checks results against objectives | `chrome-extension/src/background/agent/validator.ts` |
 
-- **Turbo** manages task dependencies and caching
-- **Vite** bundles each workspace independently
-- **TypeScript** with strict configuration across all packages
-- **ESLint** + **Prettier** for code quality
-- Each workspace has its own `vite.config.mts` and `tsconfig.json`
+Agent coordination:
+1. Planner receives task → generates strategy (JSON plan)
+2. Navigator receives strategy → reads browser state → generates actions
+3. Actions execute via Puppeteer CDP → results return to Navigator
+4. **Validator** evaluates result against original objective
+5. If invalid → signals Planner for replan; if valid → done
 
-### Key Technologies
+Action registry: `chrome-extension/src/background/agent/actions/builder.ts` (20+ actions)
 
-- **Chrome Extension Manifest V3**
-- **React 18** with TypeScript
-- **Tailwind CSS** for styling
-- **Vite** for bundling
-- **Puppeteer** for browser automation
-- **Chrome APIs** for browser automation
-- **LangChain.js** for LLM integration
+### Layer 3: Tools (Execution)
 
-## Development Notes
+Deterministic functions agents invoke.
 
-- Extension loads as unpacked from `dist/` directory after build
-- Hot reload works in development mode via Vite HMR
-- Background scripts run as service workers (Manifest V3)
-- Content scripts inject into web pages for DOM access
-- Multi-agent coordination happens through Chrome messaging APIs
-- Distribution zips are written to `dist-zip/`
-- Build flags: set `__DEV__=true` for watch builds; 
-- Do not edit generated outputs: `dist/**`, `build/**`, `packages/i18n/lib/**`
+**Existing browser tools** (from Nanobrowser):
+- `click(elementIndex)`, `type(elementIndex, text)`, `scroll(direction, amount)`
+- `goToUrl(url)`, `goBack()`, `openTab(url)`, `switchTab(tabIndex)`
+- `extract(instruction)`, `waitForContent(selector)`, `done(result)`
 
-## Unit Tests
+**Custom tools** (added by Dot):
+- `getProfileField(field)` — read from `profileStore`
+- `saveResults(type, data)` — persist to `resultsStore`
+- `humanInterrupt(reason, url)` — pause execution, prompt user
+- `getWorkflowParams(workflowId)` — retrieve workflow template parameters
+- `readUploadedFile(fileId)` — read parsed content from `uploadStore` by ID
+- `listUploadedFiles()` — list all uploaded files with IDs, names, and types
 
-- Framework: Vitest
-- Location/naming: `chrome-extension/src/**/__tests__` with `*.test.ts`
-- Run: `pnpm -F chrome-extension test`
-- Targeted example: `pnpm -F chrome-extension test -- -t "Sanitizer"`
-- Prefer fast, deterministic tests; mock network/browser APIs
+---
 
-## Testing Extension
+## 3. Project Structure
 
-After building, load the extension:
+```
+dot/
+├── CLAUDE.md                          # THIS FILE — Dot build spec
+├── package.json                       # Root workspace config
+├── pnpm-workspace.yaml               # Workspace definitions
+├── turbo.json                        # Build orchestration
+├── .nvmrc                            # Node version (nvm use)
+├── .npmrc                            # engine-strict=true
+├── .env.local                        # Secrets (VITE_*, git-ignored)
+│
+├── .claude/
+│   └── settings.json                 # Claude Code permissions
+│
+├── chrome-extension/                  # Main extension
+│   ├── manifest.json                 # Chrome MV3 manifest
+│   ├── vite.config.mts               # Aliases: @root, @src, @assets
+│   └── src/
+│       └── background/
+│           ├── index.ts              # Service worker entry + setupExecutor()
+│           ├── agent/
+│           │   ├── planner.ts        # PlannerAgent (LangChain)
+│           │   ├── navigator.ts      # NavigatorAgent (LangChain)
+│           │   ├── validator.ts      # ValidatorAgent (LangChain)
+│           │   └── actions/
+│           │       └── builder.ts    # ActionBuilder — register custom tools HERE
+│           ├── browser/
+│           │   ├── browser-context.ts # Multi-tab management
+│           │   └── page.ts           # Puppeteer page wrapper
+│           ├── llm/
+│           │   └── create-chat-model.ts # LLM factory
+│           └── workflows/            # ★ NEW
+│               ├── index.ts
+│               ├── job-search.ts
+│               ├── research.ts
+│               ├── extract.ts
+│               └── fill-forms.ts
+│
+├── pages/
+│   ├── side-panel/                   # ★ PRIMARY UI WORK
+│   │   ├── index.html               # Font loading
+│   │   ├── vite.config.mts          # Alias: @src → page src/
+│   │   └── src/
+│   │       ├── index.css             # ★ Theme variables, glassmorphism, dark mode
+│   │       ├── App.tsx               # Boot → chat transition
+│   │       └── components/
+│   │           ├── BootScreen.tsx     # ★ NEW — power-on ritual
+│   │           ├── WorkflowPicker.tsx # ★ NEW — workflow pills + param form
+│   │           ├── ResultsCard.tsx    # ★ NEW — structured data display
+│   │           ├── FileUpload.tsx     # ★ NEW — drag-drop + click file attach
+│   │           ├── FileChip.tsx       # ★ NEW — attached file indicator
+│   │           ├── AgentMessage.tsx   # ★ RESTYLE — glassmorphic bubbles
+│   │           ├── UserMessage.tsx    # ★ RESTYLE — right-aligned bubbles
+│   │           ├── StatusRow.tsx      # ★ RESTYLE — execution status
+│   │           ├── ChatInput.tsx      # ★ RESTYLE — input bar + amber send + attach btn
+│   │           └── TopBar.tsx         # ★ NEW — brand + dark mode toggle
+│   ├── options/                      # Settings (API keys, models)
+│   └── content/                      # Content script (page injection)
+│
+├── packages/
+│   ├── storage/lib/
+│   │   ├── profileStore.ts           # ★ NEW — user profile data
+│   │   ├── resultsStore.ts           # ★ NEW — extraction results
+│   │   └── uploadStore.ts            # ★ NEW — parsed file uploads
+│   ├── shared/                       # Common utilities
+│   ├── ui/                           # Shared React components (REUSE)
+│   ├── schema-utils/                 # Validation schemas
+│   ├── tailwind-config/              # ★ EXTEND — add 3-color palette
+│   ├── i18n/                         # Internationalization (DO NOT EDIT lib/**)
+│   ├── vite-config/                  # withPageConfig helper
+│   ├── dev-utils/                    # Dev utilities
+│   ├── hmr/                          # Hot module reload
+│   ├── tsconfig/                     # Shared TS configs
+│   └── zipper/                       # Distribution zip tool
+│
+└── docs/                             # ★ NEW
+    ├── DESIGN-SYSTEM.md
+    ├── WORKFLOWS.md
+    └── ARCHITECTURE.md
+```
 
-1. Open `chrome://extensions/`
-2. Enable "Developer mode"
-3. Click "Load unpacked"
-4. Select the `dist/` directory
+### 3.1 Legend
 
-## Internationalization (i18n)
+| Symbol | Meaning |
+|--------|---------|
+| ★ NEW | Files we create from scratch |
+| ★ RESTYLE | Existing files — CSS/layout changes only |
+| ★ EXTEND | Existing files — additive config changes |
+| (none) | Upstream Nanobrowser — do not modify unless necessary |
 
-### Key Naming Convention
+### 3.2 Vite Aliases (from upstream)
 
-Follow the structured naming pattern: `component_category_specificAction_state`
+| Workspace | Alias | Points to |
+|-----------|-------|-----------|
+| `chrome-extension` | `@root` | extension root |
+| `chrome-extension` | `@src` | `chrome-extension/src/` |
+| `chrome-extension` | `@assets` | `chrome-extension/assets/` |
+| `pages/*` | `@src` | page's `src/` directory |
 
-**Semantic Prefixes by Component:**
+Use `packages/vite-config`'s `withPageConfig` for page workspaces.
 
-- `bg_` - Background service worker operations
-- `exec_` - Executor/agent execution lifecycle
-- `act_` - Agent actions and web automation
-- `errors_` - Global error messages
-- `options_` - Settings page components
-- `chat_` - Chat interface elements
-- `nav_` - Navigation elements
-- `permissions_` - Permission-related messages
+---
 
-**State-Based Suffixes:**
+## 4. Build Phases
 
-- `_start` - Action beginning (e.g., `act_goToUrl_start`)
-- `_ok` - Successful completion (e.g., `act_goToUrl_ok`)
-- `_fail` - Failure state (e.g., `exec_task_fail`)
-- `_cancel` - Cancelled operation
-- `_pause` - Paused state
+### Phase 1: Foundation (Day 1)
+**Goal**: Fork running, dev environment verified
 
-**Error Categorization:**
+- [ ] Clone nanobrowser → `dot`
+- [ ] `nvm use` → verify Node version matches `.nvmrc`
+- [ ] `pnpm install` → clean install (engine-strict enforced)
+- [ ] `pnpm dev` → hot-reload builds, no errors
+- [ ] Load `dist/` as unpacked extension in Chrome
+- [ ] Configure one API key via extension options page
+- [ ] Test: "Go to Hacker News and extract top 5 titles"
+- [ ] Verify all 3 agents (Planner → Navigator → Validator) execute
 
-- `_errors_` subcategory for component-specific errors
-- Global `errors_` prefix for system-wide errors
-- Descriptive error names (e.g., `act_errors_elementNotExist`)
+**Verify**: Side panel shows completed task with extracted results
 
-**Command Structure:**
+### Phase 2: Theme Foundation (Day 2–3)
+**Goal**: Three-tone brutalist glassmorphism on side panel
 
-- `_cmd_` for command-related messages (e.g., `bg_cmd_newTask_noTask`)
-- `_setup_` for configuration issues (e.g., `bg_setup_noApiKeys`)
+- [ ] Add Google Fonts to `pages/side-panel/index.html` (Manrope + Cormorant Garamond)
+- [ ] Create CSS variables in `pages/side-panel/src/index.css`
+  - Light mode + dark mode (`[data-theme="dark"]`)
+  - Glass utility classes (`.glass`, `.glass-card`, `.glass-input`)
+  - Monospace label utility (`.label-mono`)
+- [ ] Extend `packages/tailwind-config/` with named tokens: `ground`, `ink`, `amber`
+- [ ] Build `TopBar.tsx` — amber square mark + "DOT" brand + dark toggle + live dot
+- [ ] `pnpm -F pages/side-panel type-check` → pass
+- [ ] `pnpm -F pages/side-panel build` → exit 0
 
-### Usage
+**Verify**: Side panel renders with new theme, both light/dark modes
+
+### Phase 3: Boot Ritual + Chat Restyle (Day 4–5)
+**Goal**: Power-on gate + restyled messages
+
+- [ ] Build `BootScreen.tsx` — tag pill → Cormorant heading → subtitle → ⏻ button
+- [ ] ⏻ click triggers `setupExecutor()` message to background service worker
+- [ ] Transition: fade boot → fade in chat + input bar
+- [ ] Restyle `AgentMessage.tsx` — glassmorphic bubbles, squared avatars, monospace labels
+- [ ] Restyle `UserMessage.tsx` — solid `--text` bg, `--bg` text, sharp bottom-right
+- [ ] Restyle `StatusRow.tsx` — left amber border, pulsing dot, monospace status
+- [ ] Restyle `ChatInput.tsx` — glassmorphic input, solid amber send button, attach (📎) button
+- [ ] Build `FileUpload.tsx` — hidden `<input type="file" accept=".md,.pdf">`, triggered by attach button
+  - Drag-and-drop zone: `ChatInput` wrapper accepts dropped `.md`/`.pdf` files
+  - On file select: parse content, store via `uploadStore.addFile()`, show `FileChip`
+  - PDF parsing: use `pdfjs-dist` to extract text (add as dependency — ask first)
+  - MD parsing: read as UTF-8 text, store raw
+  - Validation: reject files > 5MB, reject non `.md`/`.pdf`, show error in `StatusRow`
+- [ ] Build `FileChip.tsx` — displays attached file name + size + remove (×) button
+  - Renders above input bar when files are attached
+  - Monospace 9px, `var(--ln)` border, `var(--gl)` bg, 4px radius
+  - Remove button: `var(--mu)` color, clears from `uploadStore`
+- [ ] `pnpm -F pages/side-panel type-check && pnpm -F pages/side-panel build`
+
+**Verify**: Boot screen → click power → chat with styled messages
+
+### Phase 4: Storage Layer (Day 6)
+**Goal**: Profile, results, and upload stores operational
+
+- [ ] Create `packages/storage/lib/profileStore.ts`
+  - Interface: `ProfileData { name, email, phone, location, education[], experience[], skills[], links{} }`
+  - Uses `createStorage()` with `StorageEnum.Local`
+- [ ] Create `packages/storage/lib/resultsStore.ts`
+  - Interface: `SavedResult { id, type, data, source, timestamp }`
+  - Array storage with append/query helpers
+- [ ] Create `packages/storage/lib/uploadStore.ts`
+  - Interface: `UploadedFile { id, name, type: 'md'|'pdf', content, size, timestamp }`
+  - `.md` files: stored as raw text (no parsing needed)
+  - `.pdf` files: parsed to text via `pdf.js` (pdfjs-dist) before storage
+  - Max file size: 5MB per file, 20MB total across all uploads
+  - Helpers: `addFile()`, `removeFile()`, `getFile(id)`, `listFiles()`, `clearAll()`
+- [ ] Export all from `packages/storage/lib/index.ts`
+- [ ] `pnpm -F packages/storage type-check` → pass
+
+**Verify**: Import stores, read/write round-trip succeeds for all three
+
+### Phase 5: Custom Tools (Day 7–8)
+**Goal**: Six new actions in Navigator's action registry
+
+- [ ] `get_profile_field` — schema: `z.object({ field: z.string() })`, reads `profileStore`
+- [ ] `save_results` — schema: `z.object({ type: z.enum([...]), data: z.string() })`, writes `resultsStore`
+- [ ] `human_interrupt` — schema: `z.object({ reason: z.string(), url: z.string() })`, pauses executor
+- [ ] `get_workflow_params` — schema: `z.object({ workflowId: z.string() })`, reads workflow registry
+- [ ] `read_uploaded_file` — schema: `z.object({ fileId: z.string() })`, reads parsed content from `uploadStore`
+- [ ] `list_uploaded_files` — schema: `z.object({})`, returns `{ id, name, type }[]` from `uploadStore`
+- [ ] All registered in `chrome-extension/src/background/agent/actions/builder.ts`
+- [ ] `pnpm -F chrome-extension type-check` → pass
+
+**Verify**: Actions appear in Navigator's available action list
+
+### Phase 6: Workflow Templates (Day 8–9)
+**Goal**: Four workflows + picker UI
+
+- [ ] Create workflow registry: `chrome-extension/src/background/workflows/index.ts`
+- [ ] Create `job-search.ts`, `research.ts`, `extract.ts`, `fill-forms.ts`
+- [ ] Build `WorkflowPicker.tsx` — pills that expand to param form
+- [ ] Wire workflow → executor via Chrome messaging
+- [ ] Add i18n keys following `component_category_specificAction_state` pattern
+- [ ] `pnpm -F chrome-extension type-check && pnpm -F pages/side-panel build`
+
+**Verify**: Select "Job search" → params → task dispatched → agent executes
+
+### Phase 7: Results Display (Day 10)
+**Goal**: Extraction data renders inline in chat
+
+- [ ] Build `ResultsCard.tsx` — glass card, amber badge, hoverable rows, stats bar
+- [ ] Wire `save_results` action → side panel message → renders card
+- [ ] Add "Results" tab for browsing saved results
+- [ ] `pnpm -F pages/side-panel type-check && build`
+
+**Verify**: Job search completes → results card renders with clickable rows
+
+### Phase 8: Polish + Ship (Day 11–12)
+**Goal**: Production-ready extension
+
+- [ ] Transitions: `.4s cubic-bezier(.2,1,.3,1)` on interactive elements
+- [ ] Ambient gradients (accent-glass radial, 6% opacity)
+- [ ] Scrollbar styling (thin, glass-themed)
+- [ ] `docs/DESIGN-SYSTEM.md`, `docs/WORKFLOWS.md`, `docs/ARCHITECTURE.md`
+- [ ] Update `manifest.json`: name → "Dot", version → "0.1.0"
+- [ ] Update extension icons (amber dot mark)
+- [ ] Full build: `pnpm build` → exit 0
+- [ ] Distribution: `pnpm zip` → `dist-zip/`
+- [ ] E2E: `pnpm e2e` (if applicable)
+- [ ] Clean install test from zip in fresh Chrome profile
+
+**Verify**: Full job search workflow succeeds end-to-end
+
+---
+
+## 5. Development Commands
+
+```bash
+# Install
+pnpm install
+
+# Development (hot-reload)
+pnpm dev
+
+# Production build
+pnpm build
+
+# Workspace-scoped (PREFER THESE — faster)
+pnpm -F pages/side-panel build
+pnpm -F chrome-extension type-check
+pnpm -F packages/storage type-check
+pnpm -F pages/side-panel lint -- src/components/BootScreen.tsx
+pnpm -F chrome-extension prettier -- src/background/index.ts
+
+# Tests
+pnpm -F chrome-extension test
+pnpm -F chrome-extension test -- -t "ProfileStore"
+
+# E2E (builds + zips first)
+pnpm e2e
+
+# Distribution
+pnpm zip                    # → dist-zip/
+
+# Cleaning
+pnpm clean                  # all artifacts + node_modules
+pnpm clean:bundle           # just build outputs
+pnpm clean:turbo            # Turbo state/cache
+pnpm clean:node_modules     # deps only
+pnpm clean:install          # clean + reinstall
+
+# Version
+pnpm update-version
+```
+
+**Always use `pnpm`** — `.npmrc` enforces `engine-strict=true`.
+**Only use scripts in `package.json`** — never invent new commands.
+
+---
+
+## 6. Code Style (from upstream)
+
+- Prettier: 2 spaces, semicolons, single quotes, trailing commas, `printWidth: 120`
+- ESLint: React/Hooks/Import/A11y + TypeScript
+- Components: `PascalCase` | Variables/functions: `camelCase` | Directories: `kebab-case`
+- Type imports: `import type { X } from '...'` (enforced: `@typescript-eslint/consistent-type-imports`)
+- Run `pnpm type-check` before committing
+- Run `pnpm lint` to maintain style consistency
+
+---
+
+## 7. i18n (from upstream)
+
+### Key Naming Convention: `component_category_specificAction_state`
+
+| Prefix | Component |
+|--------|-----------|
+| `bg_` | Background service worker |
+| `exec_` | Executor/agent lifecycle |
+| `act_` | Agent actions |
+| `chat_` | Chat interface |
+| `nav_` | Navigation |
+| `dot_` | Dot-specific features (★ NEW) |
+
+| Suffix | State |
+|--------|-------|
+| `_start` | Action beginning |
+| `_ok` | Success |
+| `_fail` | Failure |
+| `_cancel` | Cancelled |
+| `_pause` | Paused |
 
 ```typescript
 import { t } from '@extension/i18n';
-
-// Simple message
-t('bg_errors_noTabId')
-
-// With placeholders
-t('act_click_ok', ['5', 'Submit Button'])
+t('dot_boot_powerOn_start')
+t('dot_workflow_jobSearch_ok', ['10', 'Indeed'])
 ```
 
-### Placeholders
+- Edit source locale JSON in `packages/i18n/locales/**`
+- **Never edit** generated files under `packages/i18n/lib/**`
 
-Use Chrome i18n placeholder format with proper definitions:
+---
 
-```json
-{
-  "act_goToUrl_start": {
-    "message": "Navigating to $URL$",
-    "placeholders": {
-      "url": {
-        "content": "$1",
-        "example": "https://example.com"
-      }
-    }
-  }
-}
+## 8. VS Code Setup
+
+### 8.1 Prerequisites
+
+```bash
+nvm install 22 && nvm use 22       # Node (match .nvmrc)
+npm install -g pnpm                 # Package manager
+npm install -g @anthropic-ai/claude-code  # Claude Code CLI
 ```
 
-**Guidelines:**
+### 8.2 Clone + Configure
 
-- Use descriptive, self-documenting key names
-- Separate user-facing strings from internal/log strings
-- Follow hierarchical naming for maintainability
-- Add placeholders with examples for dynamic content
-- Group related keys by component prefix
+```bash
+git clone https://github.com/nanobrowser/nanobrowser.git dot
+cd dot
+# Drop in: CLAUDE.md, .claude/settings.json, docs/*.md
+```
 
-### Generation
+### 8.3 VS Code Extension
 
-- Do not edit generated files under `packages/i18n/lib/**`.
-- The generator `packages/i18n/genenrate-i18n.mjs` runs via the `@extension/i18n`
-  workspace `ready`/`build` scripts to (re)generate types and runtime helpers.
-  Edit source locale JSON in `packages/i18n/locales/**` instead.
+1. `Ctrl+Shift+X` → search "Claude Code" → install from **Anthropic**
+2. Click **⚡ Spark icon** → sign in
+3. Requires: Claude Pro ($20/mo) or Max ($100/mo) or API credits
 
-## Code Quality Standards
+### 8.4 First Prompt
 
-### Development Principles
+```
+@CLAUDE.md
 
-- **Simple but Complete Solutions**: Write straightforward, well-documented code that fully addresses requirements
-- **Modular Design**: Structure code into focused, single-responsibility modules and functions
-- **Testability**: Design components to be easily testable with clear inputs/outputs and minimal dependencies
-- **Type Safety**: Leverage TypeScript's type system for better code reliability and maintainability
+Read this file completely. Confirm by listing:
+1. The 3-color palette hex values
+2. The 8 build phases
+3. The 3 upstream agents (Planner, Navigator, Validator)
+4. The 4 custom tools to register
 
-### Code Organization
+Then execute Phase 1: Foundation.
+Show plan first. Use /plan mode.
+```
 
-- Extract reusable logic into utility functions or shared packages
-- Use dependency injection for better testability
-- Keep functions small and focused on a single task
-- Prefer composition over inheritance
-- Write self-documenting code with clear naming
+### 8.5 Workflow: Plan → Review → Execute → Verify
 
-### Style & Naming
+1. Prompt: "Execute Phase N. Show plan first."
+2. Review: numbered steps with file paths → approve `y`
+3. Execute: inline diffs in VS Code
+4. Accept/Reject each diff
+5. Verify: `pnpm -F <workspace> type-check` → pass
+6. Commit: `feat(scope): description`
 
-- Formatting via Prettier (2 spaces, semicolons, single quotes,
-  trailing commas, `printWidth: 120`)
-- ESLint rules include React/Hooks/Import/A11y + TypeScript
-- Components: `PascalCase`; variables/functions: `camelCase`;
-  workspace/package directories: `kebab-case`
-- Enforced rule: `@typescript-eslint/consistent-type-imports`
-  (use `import type { ... } from '...'` for type-only imports)
+### 8.6 Shortcuts
 
-### Quality Assurance
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Shift+P` → "Claude Code: Open" | Open panel |
+| `@filename` | Attach file to context |
+| `/plan` | Plan mode (review before execute) |
+| `/compact` | Compact conversation (save context) |
+| `/permissions` | View permission rules |
 
-- Run `pnpm type-check` before committing to catch TypeScript errors
-- Use `pnpm lint` to maintain code style consistency
-- Write unit tests for business logic and utility functions
-- Test UI components in isolation when possible
+---
 
-### Security Guidelines
+## 9. Resources
 
-- **Input Validation**: Always validate and sanitize user inputs, especially URLs, file paths, and form data
-- **Credential Management**: Never log, commit, or expose API keys, tokens, or sensitive configuration
-- **Content Security Policy**: Respect CSP restrictions and avoid `eval()` or dynamic code execution
-- **Permission Principle**: Request minimal Chrome extension permissions required for functionality
-- **Data Privacy**: Handle user data securely and avoid unnecessary data collection or storage
-- **XSS Prevention**: Sanitize content before rendering, especially when injecting into web pages
-- **URL Validation**: Validate and restrict navigation to prevent malicious redirects
-- **Error Handling**: Avoid exposing sensitive information in error messages or logs
- - **Secrets/Config**: Use `.env.local` (git‑ignored) and prefix variables with `VITE_`.
-   Example: `VITE_POSTHOG_API_KEY`. Vite in `chrome-extension/vite.config.mts` loads
-   `VITE_*` from the parent directory.
+| Resource | URL |
+|----------|-----|
+| Nanobrowser upstream | https://github.com/nanobrowser/nanobrowser |
+| Nanobrowser DeepWiki | https://deepwiki.com/nanobrowser/nanobrowser |
+| Chrome MV3 docs | https://developer.chrome.com/docs/extensions/mv3/ |
+| LangChain.js | https://js.langchain.com/ |
+| Puppeteer | https://pptr.dev/ |
+| Tailwind CSS | https://tailwindcss.com/docs |
+| Vite | https://vitejs.dev/ |
+| Zod | https://zod.dev/ |
+| Chrome Storage API | https://developer.chrome.com/docs/extensions/reference/storage/ |
+| Claude Code best practices | https://code.claude.com/docs/en/best-practices |
+| Claude Code permissions | https://code.claude.com/docs/en/permissions |
+| Agentic workflow patterns | https://www.patronus.ai/ai-agent-development/agentic-workflow |
 
-## Important Reminders
+---
 
-- Always use `pnpm` package manager (required for this project)
-- Node.js version: follow `.nvmrc` and `package.json` engines
-- Use `nvm use` to match `.nvmrc` before installing
-- `engine-strict=true` is enabled in `.npmrc`; non-matching engines fail install
-- Turbo manages task dependencies and caching across workspaces
-- Extension builds to `dist/` directory which is loaded as unpacked extension
-- Zipped distributions are written to `dist-zip/`
-- Only supports Chrome/Edge 
-- Keep diffs minimal and scoped; avoid mass refactors or reformatting unrelated files
-- Do not modify generated artifacts (`dist/**`, `build/**`, `packages/i18n/lib/**`)
-  or workspace/global configs (`turbo.json`, `pnpm-workspace.yaml`, `tsconfig*`)
-  without approval
- - Prefer workspace-scoped checks:
-   `pnpm -F <workspace> type-check`, `pnpm -F <workspace> lint`,
-   `pnpm -F <workspace> prettier -- <changed-file>`, and build if applicable
-- Vite aliases: pages use `@src` for page `src/`; the extension uses
-  `@root`, `@src`, `@assets` (see `chrome-extension/vite.config.mts`). Use
-  `packages/vite-config`’s `withPageConfig` for page workspaces.
- - Only use scripts defined in `package.json`; do not invent new commands
- - Change policy: ask first for new deps, file renames/moves/deletes, or
-   global/workspace config changes; allowed without asking: read/list files,
-   workspace‑scoped lint/format/type-check/build, and small focused patches
- - Reuse existing building blocks: `packages/ui` components and
-   `packages/tailwind-config` tokens instead of re-implementing
+## 10. File Manifest
+
+### New Files (19)
+```
+.claude/settings.json
+docs/DESIGN-SYSTEM.md
+docs/WORKFLOWS.md
+docs/ARCHITECTURE.md
+pages/side-panel/src/components/BootScreen.tsx
+pages/side-panel/src/components/WorkflowPicker.tsx
+pages/side-panel/src/components/ResultsCard.tsx
+pages/side-panel/src/components/FileUpload.tsx
+pages/side-panel/src/components/FileChip.tsx
+pages/side-panel/src/components/TopBar.tsx
+pages/side-panel/src/components/StatusRow.tsx
+chrome-extension/src/background/workflows/index.ts
+chrome-extension/src/background/workflows/job-search.ts
+chrome-extension/src/background/workflows/research.ts
+chrome-extension/src/background/workflows/extract.ts
+chrome-extension/src/background/workflows/fill-forms.ts
+packages/storage/lib/profileStore.ts
+packages/storage/lib/resultsStore.ts
+packages/storage/lib/uploadStore.ts
+```
+
+### Modified Files (8)
+```
+pages/side-panel/index.html              → Google Fonts
+pages/side-panel/src/index.css            → theme + glass utilities
+pages/side-panel/src/App.tsx              → boot → chat transition
+pages/side-panel/src/components/AgentMessage.tsx  → restyle
+pages/side-panel/src/components/ChatInput.tsx     → restyle
+chrome-extension/src/background/agent/actions/builder.ts → 4 custom actions
+packages/storage/lib/index.ts             → export new stores
+packages/tailwind-config/...              → extend palette
+chrome-extension/manifest.json            → name: "Dot", version: "0.1.0"
+```
+
+### Untouched
+Everything else — preserves upstream mergeability.

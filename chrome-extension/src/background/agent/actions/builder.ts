@@ -22,7 +22,17 @@ import {
   nextPageActionSchema,
   scrollToTopActionSchema,
   scrollToBottomActionSchema,
+  getProfileFieldActionSchema,
+  saveResultsActionSchema,
+  humanInterruptActionSchema,
+  getWorkflowParamsActionSchema,
+  readUploadedFileActionSchema,
+  listUploadedFilesActionSchema,
+  openAiChatActionSchema,
+  fetchUrlActionSchema,
 } from './schemas';
+import { profileStore, resultsStore, uploadStore } from '@extension/storage';
+import { getWorkflow } from '../../workflows';
 import { z } from 'zod';
 import { createLogger } from '@src/background/log';
 import { ExecutionState, Actors } from '../event/types';
@@ -167,7 +177,13 @@ export class ActionBuilder {
       const intent = input.intent || t('act_searchGoogle_start', [input.query]);
       context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
 
-      await context.browserContext.navigateTo(`https://www.google.com/search?q=${input.query}`);
+      const searchUrl = `https://www.google.com/search?q=${input.query}`;
+      if (!context.hasClaimedTab) {
+        context.hasClaimedTab = true;
+        await context.browserContext.openTab(searchUrl);
+      } else {
+        await context.browserContext.navigateTo(searchUrl);
+      }
 
       const msg2 = t('act_searchGoogle_ok', [input.query]);
       context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg2);
@@ -182,7 +198,12 @@ export class ActionBuilder {
       const intent = input.intent || t('act_goToUrl_start', [input.url]);
       this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
 
-      await this.context.browserContext.navigateTo(input.url);
+      if (!this.context.hasClaimedTab) {
+        this.context.hasClaimedTab = true;
+        await this.context.browserContext.openTab(input.url);
+      } else {
+        await this.context.browserContext.navigateTo(input.url);
+      }
       const msg2 = t('act_goToUrl_ok', [input.url]);
       this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg2);
       return new ActionResult({
@@ -701,6 +722,178 @@ export class ActionBuilder {
       true,
     );
     actions.push(selectDropdownOption);
+
+    // Dot Custom Tools
+    const getProfileField = new Action(async (input: z.infer<typeof getProfileFieldActionSchema.schema>) => {
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, `Reading profile field: ${input.field}`);
+      const profile = await profileStore.getProfile();
+      const value = profile[input.field as keyof typeof profile];
+      if (value === undefined) {
+        const msg = `Profile field "${input.field}" not found`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, msg);
+        return new ActionResult({ error: msg, includeInMemory: true });
+      }
+      const result = JSON.stringify(value);
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, `Profile field "${input.field}": ${result}`);
+      return new ActionResult({ extractedContent: result, includeInMemory: true });
+    }, getProfileFieldActionSchema);
+    actions.push(getProfileField);
+
+    const saveResults = new Action(async (input: z.infer<typeof saveResultsActionSchema.schema>) => {
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, `Saving ${input.type} results`);
+      let source = '';
+      try {
+        const page = await this.context.browserContext.getCurrentPage();
+        source = page.url();
+      } catch {
+        // source stays empty if page unavailable
+      }
+      const saved = await resultsStore.addResult({ type: input.type, data: input.data, source });
+      const msg = `DOT_RESULTS_SAVED::${saved.id}::${saved.type}`;
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+      return new ActionResult({ extractedContent: msg, includeInMemory: true });
+    }, saveResultsActionSchema);
+    actions.push(saveResults);
+
+    const humanInterrupt = new Action(async (input: z.infer<typeof humanInterruptActionSchema.schema>) => {
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, `Human input required: ${input.reason}`);
+      await this.context.pause();
+      while (this.context.paused) {
+        if (this.context.stopped) break;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      const msg = `Resumed after interrupt at ${input.url}`;
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+      return new ActionResult({ extractedContent: msg, includeInMemory: true });
+    }, humanInterruptActionSchema);
+    actions.push(humanInterrupt);
+
+    const getWorkflowParams = new Action(async (input: z.infer<typeof getWorkflowParamsActionSchema.schema>) => {
+      this.context.emitEvent(
+        Actors.NAVIGATOR,
+        ExecutionState.ACT_START,
+        `Fetching params for workflow: ${input.workflowId}`,
+      );
+      const workflow = getWorkflow(input.workflowId);
+      if (!workflow) {
+        const msg = `Unknown workflow: "${input.workflowId}". Available: job-search, research, extract, fill-forms`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, msg);
+        return new ActionResult({ error: msg, includeInMemory: true });
+      }
+      const result = JSON.stringify({
+        workflowId: workflow.id,
+        description: workflow.description,
+        params: workflow.params.map(p => ({ key: p.key, label: p.label, type: p.type, optional: p.optional ?? false })),
+      });
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, result);
+      return new ActionResult({ extractedContent: result, includeInMemory: true });
+    }, getWorkflowParamsActionSchema);
+    actions.push(getWorkflowParams);
+
+    const readUploadedFile = new Action(async (input: z.infer<typeof readUploadedFileActionSchema.schema>) => {
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, `Reading uploaded file: ${input.fileId}`);
+      const file = await uploadStore.getFile(input.fileId);
+      if (!file) {
+        const msg = `Uploaded file "${input.fileId}" not found`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, msg);
+        return new ActionResult({ error: msg, includeInMemory: true });
+      }
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, `Read file "${file.name}" (${file.size} bytes)`);
+      return new ActionResult({ extractedContent: file.content, includeInMemory: true });
+    }, readUploadedFileActionSchema);
+    actions.push(readUploadedFile);
+
+    const listUploadedFiles = new Action(async (_input: z.infer<typeof listUploadedFilesActionSchema.schema>) => {
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, 'Listing uploaded files');
+      const files = await uploadStore.listFiles();
+      const summary = files.map(f => ({ id: f.id, name: f.name, type: f.type }));
+      const result = JSON.stringify(summary);
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, `Found ${files.length} uploaded file(s)`);
+      return new ActionResult({ extractedContent: result, includeInMemory: true });
+    }, listUploadedFilesActionSchema);
+    actions.push(listUploadedFiles);
+
+    const fetchUrl = new Action(async (input: z.infer<typeof fetchUrlActionSchema.schema>) => {
+      this.context.emitEvent(
+        Actors.NAVIGATOR,
+        ExecutionState.ACT_START,
+        `fetch_url: ${input.method ?? 'GET'} ${input.url}`,
+      );
+      const page = await this.context.browserContext.getCurrentPage();
+      const tabId = page.tabId;
+
+      type FetchResult = { ok: boolean; status: number; text: string; error?: string };
+      let result: FetchResult;
+      try {
+        const injected = await chrome.scripting.executeScript<
+          [string, string, Record<string, string> | undefined, string | undefined],
+          FetchResult
+        >({
+          target: { tabId },
+          func: (async (
+            url: string,
+            method: string,
+            headers: Record<string, string> | undefined,
+            body: string | undefined,
+          ) => {
+            try {
+              const res = await fetch(url, {
+                method: method || 'GET',
+                credentials: 'include',
+                headers: { Accept: 'application/json', ...headers },
+                body: body ?? undefined,
+              });
+              const text = await res.text();
+              return { ok: res.ok, status: res.status, text };
+            } catch (e) {
+              return { ok: false, status: 0, text: '', error: String(e) };
+            }
+          }) as unknown as (
+            url: string,
+            method: string,
+            headers: Record<string, string> | undefined,
+            body: string | undefined,
+          ) => FetchResult,
+          args: [input.url, input.method ?? 'GET', input.headers, input.body],
+        });
+        result = injected[0]?.result ?? { ok: false, status: 0, text: '', error: 'No result from script' };
+      } catch (e) {
+        const msg = `fetch_url failed: ${e instanceof Error ? e.message : String(e)}`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, msg);
+        return new ActionResult({ error: msg, includeInMemory: true });
+      }
+
+      if (!result.ok) {
+        const msg = `fetch_url HTTP ${result.status}${result.error ? ': ' + result.error : ''}`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, msg);
+        return new ActionResult({ error: msg, includeInMemory: true });
+      }
+
+      // Cap response to avoid flooding the LLM context
+      const capped = result.text.length > 8000 ? result.text.slice(0, 8000) + '\n…[truncated]' : result.text;
+      const msg = `fetch_url OK (${result.status}) — ${result.text.length} chars`;
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+      return new ActionResult({ extractedContent: capped, includeInMemory: true });
+    }, fetchUrlActionSchema);
+    actions.push(fetchUrl);
+
+    const AI_CHAT_URLS: Record<string, string> = {
+      gemini: 'https://gemini.google.com/',
+      claude: 'https://claude.ai/new',
+      chatgpt: 'https://chatgpt.com/',
+      deepseek: 'https://chat.deepseek.com/',
+    };
+    const openAiChat = new Action(async (input: z.infer<typeof openAiChatActionSchema.schema>) => {
+      const provider = input.provider ?? 'gemini';
+      const url = AI_CHAT_URLS[provider];
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, `Opening ${provider} chat`);
+      await this.context.browserContext.openTab(url);
+      this.context.hasClaimedTab = true;
+      const msg = `Opened ${provider} at ${url} in a new tab`;
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+      return new ActionResult({ extractedContent: msg, includeInMemory: true });
+    }, openAiChatActionSchema);
+    actions.push(openAiChat);
 
     return actions;
   }

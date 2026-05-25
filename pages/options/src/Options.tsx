@@ -38,7 +38,7 @@ const Options = () => {
 
   const handleTabClick = (tabId: TabTypes) => {
     if (tabId === 'help') {
-      window.open('https://nanobrowser.ai/docs', '_blank');
+      window.open('https://github.com/nanobrowser/nanobrowser', '_blank');
     } else {
       setActiveTab(tabId);
     }
@@ -60,27 +60,38 @@ const Options = () => {
   };
 
   return (
-    <div
-      className={`flex min-h-screen min-w-[768px] ${isDarkMode ? 'bg-slate-900' : "bg-[url('/bg.jpg')] bg-cover bg-center"} ${isDarkMode ? 'text-gray-200' : 'text-gray-900'}`}>
+    <div className="flex min-h-screen min-w-[768px]" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
       {/* Vertical Navigation Bar */}
       <nav
-        className={`w-48 border-r ${isDarkMode ? 'border-slate-700 bg-slate-800/80' : 'border-white/20 bg-[#0EA5E9]/10'} backdrop-blur-sm`}>
+        className="w-48 shrink-0 border-r"
+        style={{ borderColor: 'var(--line)', background: 'var(--surface)', backdropFilter: 'blur(16px)' }}>
         <div className="p-4">
-          <h1 className={`mb-6 text-xl font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
-            {t('options_nav_header')}
-          </h1>
-          <ul className="space-y-2">
+          <div className="mb-6 flex items-center gap-2">
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+            <span
+              style={{
+                fontFamily: 'monospace',
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                fontSize: 11,
+                color: 'var(--text)',
+                fontWeight: 700,
+              }}>
+              DOT
+            </span>
+          </div>
+          <ul className="space-y-1">
             {TABS.map(item => (
               <li key={item.id}>
                 <Button
                   onClick={() => handleTabClick(item.id)}
-                  className={`flex w-full items-center space-x-2 rounded-lg px-4 py-2 text-left text-base 
-                    ${
-                      activeTab !== item.id
-                        ? `${isDarkMode ? 'bg-slate-700/70 text-gray-300 hover:text-white' : 'bg-[#0EA5E9]/15 font-medium text-gray-700 hover:text-white'} backdrop-blur-sm`
-                        : `${isDarkMode ? 'bg-sky-800/50' : ''} text-white backdrop-blur-sm`
-                    }`}>
-                  <item.icon className="h-4 w-4" />
+                  className="flex w-full items-center space-x-2 rounded px-3 py-2 text-left text-sm transition-colors"
+                  style={
+                    activeTab === item.id
+                      ? { background: 'var(--accent)', color: 'var(--bg)' }
+                      : { background: 'transparent', color: 'var(--muted)' }
+                  }>
+                  <item.icon className="h-4 w-4 shrink-0" />
                   <span>{item.label}</span>
                 </Button>
               </li>
@@ -90,7 +101,7 @@ const Options = () => {
       </nav>
 
       {/* Main Content Area */}
-      <main className={`flex-1 ${isDarkMode ? 'bg-slate-800/50' : 'bg-white/10'} p-8 backdrop-blur-sm`}>
+      <main className="flex-1 p-8">
         <div className="mx-auto min-w-[512px] max-w-screen-lg">{renderTabContent()}</div>
       </main>
     </div>

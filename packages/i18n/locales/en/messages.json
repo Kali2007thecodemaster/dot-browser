@@ -1,11 +1,11 @@
 {
   "app_metadata_description": {
     "description": "Extension description",
-    "message": "Automate web tasks with AI! NanoBrowser is an open-source browser extension that lets you extract data, fill forms, and more."
+    "message": "Automate web tasks with AI. Dot is your personal browser agent — extract data, fill forms, run workflows, and more."
   },
   "app_metadata_name": {
     "description": "Extension name",
-    "message": "Nanobrowser: AI Web Agent & Automation"
+    "message": "Dot"
   },
   "errors_unknown": {
     "message": "Unknown error occurred"
@@ -38,7 +38,7 @@
     "message": "Back to chat"
   },
   "welcome_title": {
-    "message": "Welcome to Nanobrowser!"
+    "message": "Welcome to Dot!"
   },
   "welcome_instruction": {
     "message": "To get started, please configure your API keys in the settings page."
@@ -167,7 +167,7 @@
     "message": "Enable Voice Input"
   },
   "permissions_microphone_description": {
-    "message": "Nanobrowser needs microphone access to convert your speech to text."
+    "message": "Dot needs microphone access to convert your speech to text."
   },
   "permissions_microphone_grantButton": {
     "message": "Grant Microphone Permission"
@@ -967,5 +967,20 @@
         "example": "Option not found"
       }
     }
+  },
+  "dot_workflow_jobSearch_label": {
+    "message": "Job Search"
+  },
+  "dot_workflow_research_label": {
+    "message": "Research"
+  },
+  "dot_workflow_extract_label": {
+    "message": "Extract"
+  },
+  "dot_workflow_fillForms_label": {
+    "message": "Fill Form"
+  },
+  "dot_workflow_run_label": {
+    "message": "Run"
   }
 }

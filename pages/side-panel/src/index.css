@@ -1,3 +1,132 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --bg: #ebebeb;
+  --text: #1a1a1a;
+  --accent: #c45a2d;
+  --glass: rgba(255, 255, 255, 0.5);
+  --glass-border: rgba(255, 255, 255, 0.75);
+  --line: rgba(0, 0, 0, 0.09);
+  --muted: rgba(26, 26, 26, 0.45);
+  --surface: rgba(255, 255, 255, 0.65);
+}
+
+[data-theme='dark'] {
+  --bg: #0c0c0c;
+  --text: #e8e6e1;
+  --accent: #d4714a;
+  --glass: rgba(24, 24, 22, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --line: rgba(255, 255, 255, 0.07);
+  --muted: rgba(232, 230, 225, 0.4);
+  --surface: rgba(24, 24, 22, 0.8);
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Manrope', sans-serif;
+}
+
+@layer components {
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-card {
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+
+  .glass-input {
+    background: var(--glass);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    transition: border-color 0.2s linear;
+  }
+
+  .glass-input:focus-within {
+    border-color: var(--accent);
+  }
+
+  .label-mono {
+    font-family: monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 9px;
+    line-height: 1;
+  }
+}
+
+/* Interactive element base transitions */
+button,
+a {
+  transition: border-color 0.2s linear, color 0.2s linear;
+}
+
+/* Progress bar sweep animation */
+@keyframes progress-slide {
+  0% { transform: translateX(-200%); }
+  100% { transform: translateX(350%); }
+}
+
+.animate-progress {
+  animation: progress-slide 1.6s ease-in-out infinite;
+}
+
+/* Animated dot logo */
+@keyframes dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.75; }
+}
+
+.dot-logo {
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dot-pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* Live task status — three-dot bounce */
+@keyframes dot-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+.status-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dot-bounce 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.status-dot:nth-child(2) { animation-delay: 0.2s; }
+.status-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Thin scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}

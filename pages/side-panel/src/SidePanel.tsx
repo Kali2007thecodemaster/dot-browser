@@ -1,16 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RxDiscordLogo } from 'react-icons/rx';
-import { FiSettings } from 'react-icons/fi';
+import { FiSettings, FiDatabase, FiFileText, FiBell, FiClock } from 'react-icons/fi';
 import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
 import { type Message, Actors, chatHistoryStore, agentModelStore, generalSettingsStore } from '@extension/storage';
-import favoritesStorage, { type FavoritePrompt } from '@extension/storage/lib/prompt/favorites';
 import { t } from '@extension/i18n';
 import MessageList from './components/MessageList';
+import LiveStatusBar from './components/LiveStatusBar';
 import ChatInput from './components/ChatInput';
 import ChatHistoryList from './components/ChatHistoryList';
-import BookmarkList from './components/BookmarkList';
+import BootScreen from './components/BootScreen';
+import TopBar from './components/TopBar';
+import WorkflowPicker from './components/WorkflowPicker';
+import ResultsList from './components/ResultsList';
+import WatchList from './components/WatchList';
+import ScheduledTaskList from './components/ScheduledTaskList';
 import { EventType, type AgentEvent, ExecutionState } from './types/event';
 import './SidePanel.css';
 
@@ -21,9 +25,29 @@ declare global {
   }
 }
 
+const truncateStatus = (text: string, max = 60): string => {
+  const line = text.split('\n')[0].trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
+};
+
+function parseBatchInput(text: string): { urls: string[]; instruction: string } | null {
+  const lines = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  const urlPattern = /^https?:\/\/\S+$/;
+  const urls = lines.filter(l => urlPattern.test(l));
+  const instructionLines = lines.filter(l => !urlPattern.test(l));
+  if (urls.length >= 2 && instructionLines.length >= 1) {
+    return { urls, instruction: instructionLines.join(' ') };
+  }
+  return null;
+}
+
 const SidePanel = () => {
   const progressMessage = 'Showing progress...';
   const [messages, setMessages] = useState<Message[]>([]);
+  const [liveStatus, setLiveStatus] = useState<{ actor: string; text: string } | null>(null);
   const [inputEnabled, setInputEnabled] = useState(true);
   const [showStopButton, setShowStopButton] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -32,7 +56,10 @@ const SidePanel = () => {
   const [isFollowUpMode, setIsFollowUpMode] = useState(false);
   const [isHistoricalSession, setIsHistoricalSession] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [favoritePrompts, setFavoritePrompts] = useState<FavoritePrompt[]>([]);
+  const [isBooted, setIsBooted] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [showWatches, setShowWatches] = useState(false);
+  const [showSchedules, setShowSchedules] = useState(false);
   const [hasConfiguredModels, setHasConfiguredModels] = useState<boolean | null>(null); // null = loading, false = no models, true = has models
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
@@ -47,6 +74,8 @@ const SidePanel = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+  const batchQueueRef = useRef<{ urls: string[]; instruction: string; index: number } | null>(null);
+  const activeTabIdRef = useRef<number | null>(null);
 
   // Check for dark mode preference
   useEffect(() => {
@@ -91,6 +120,24 @@ const SidePanel = () => {
     checkModelConfiguration();
     loadGeneralSettings();
   }, [checkModelConfiguration, loadGeneralSettings]);
+
+  // Context menu pre-fill: check for selected text passed from the context menu action
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const result = await chrome.storage.session.get('dotContextMenuPending');
+        const pending = result.dotContextMenuPending as { text: string; pageUrl: string } | undefined;
+        if (pending?.text && setInputTextRef.current) {
+          const prefill = `"${pending.text.slice(0, 300)}"${pending.pageUrl ? `\n(from ${pending.pageUrl})` : ''}`;
+          setInputTextRef.current(prefill);
+          await chrome.storage.session.remove('dotContextMenuPending');
+        }
+      } catch {
+        // storage.session not available (non-Chrome env)
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Re-check model configuration when the side panel becomes visible again
   useEffect(() => {
@@ -158,23 +205,69 @@ const SidePanel = () => {
         case Actors.SYSTEM:
           switch (state) {
             case ExecutionState.TASK_START:
-              // Reset historical session flag when a new task starts
               setIsHistoricalSession(false);
               break;
-            case ExecutionState.TASK_OK:
-              setIsFollowUpMode(true);
-              setInputEnabled(true);
-              setShowStopButton(false);
-              setIsReplaying(false);
+            case ExecutionState.TASK_OK: {
+              const bq = batchQueueRef.current;
+              if (bq && bq.index + 1 < bq.urls.length) {
+                const nextIdx = bq.index + 1;
+                batchQueueRef.current = { ...bq, index: nextIdx };
+                const nextUrl = bq.urls[nextIdx];
+                setLiveStatus({
+                  actor: 'BATCH',
+                  text: `${nextIdx + 1}/${bq.urls.length} · ${truncateStatus(nextUrl, 45)}`,
+                });
+                appendMessage({ actor: Actors.USER, content: `→ ${nextUrl}`, timestamp: Date.now() });
+                portRef.current?.postMessage({
+                  type: 'follow_up_task',
+                  task: `${nextUrl}\n${bq.instruction}`,
+                  taskId: sessionIdRef.current,
+                  tabId: activeTabIdRef.current,
+                });
+              } else {
+                batchQueueRef.current = null;
+                setLiveStatus(null);
+                setIsFollowUpMode(true);
+                setInputEnabled(true);
+                setShowStopButton(false);
+                setIsReplaying(false);
+                // Show the agent's completion message (finalAnswer), but not the UUID fallback
+                const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(content ?? '');
+                if (content && !isUUID) skip = false;
+              }
               break;
-            case ExecutionState.TASK_FAIL:
-              setIsFollowUpMode(true);
-              setInputEnabled(true);
-              setShowStopButton(false);
-              setIsReplaying(false);
+            }
+            case ExecutionState.TASK_FAIL: {
+              const bq = batchQueueRef.current;
+              if (bq && bq.index + 1 < bq.urls.length) {
+                const nextIdx = bq.index + 1;
+                batchQueueRef.current = { ...bq, index: nextIdx };
+                const nextUrl = bq.urls[nextIdx];
+                setLiveStatus({
+                  actor: 'BATCH',
+                  text: `${nextIdx + 1}/${bq.urls.length} · ${truncateStatus(nextUrl, 45)}`,
+                });
+                appendMessage({ actor: Actors.USER, content: `→ ${nextUrl}`, timestamp: Date.now() });
+                portRef.current?.postMessage({
+                  type: 'follow_up_task',
+                  task: `${nextUrl}\n${bq.instruction}`,
+                  taskId: sessionIdRef.current,
+                  tabId: activeTabIdRef.current,
+                });
+              } else {
+                batchQueueRef.current = null;
+                setLiveStatus(null);
+                setIsFollowUpMode(true);
+                setInputEnabled(true);
+                setShowStopButton(false);
+                setIsReplaying(false);
+              }
               skip = false;
               break;
+            }
             case ExecutionState.TASK_CANCEL:
+              batchQueueRef.current = null;
+              setLiveStatus(null);
               setIsFollowUpMode(false);
               setInputEnabled(true);
               setShowStopButton(false);
@@ -195,10 +288,10 @@ const SidePanel = () => {
         case Actors.PLANNER:
           switch (state) {
             case ExecutionState.STEP_START:
-              displayProgress = true;
+              setLiveStatus({ actor: 'PLANNER', text: 'Planning your task…' });
               break;
             case ExecutionState.STEP_OK:
-              skip = false;
+              setLiveStatus({ actor: 'PLANNER', text: truncateStatus(content || 'Plan ready') });
               break;
             case ExecutionState.STEP_FAIL:
               skip = false;
@@ -213,26 +306,26 @@ const SidePanel = () => {
         case Actors.NAVIGATOR:
           switch (state) {
             case ExecutionState.STEP_START:
-              displayProgress = true;
+              setLiveStatus({ actor: 'NAVIGATOR', text: 'Executing step…' });
               break;
             case ExecutionState.STEP_OK:
-              displayProgress = false;
               break;
             case ExecutionState.STEP_FAIL:
               skip = false;
-              displayProgress = false;
               break;
             case ExecutionState.STEP_CANCEL:
-              displayProgress = false;
               break;
             case ExecutionState.ACT_START:
               if (content !== 'cache_content') {
-                // skip to display caching content
-                skip = false;
+                setLiveStatus({ actor: 'NAVIGATOR', text: truncateStatus(content || 'Acting…') });
               }
               break;
             case ExecutionState.ACT_OK:
-              skip = !isReplayingRef.current;
+              if (content?.startsWith('DOT_RESULTS_SAVED::')) {
+                skip = false;
+              } else {
+                skip = !isReplayingRef.current;
+              }
               break;
             case ExecutionState.ACT_FAIL:
               skip = false;
@@ -243,13 +336,12 @@ const SidePanel = () => {
           }
           break;
         case Actors.VALIDATOR:
-          // Handle legacy validator events from historical messages
           switch (state) {
             case ExecutionState.STEP_START:
-              displayProgress = true;
+              setLiveStatus({ actor: 'VALIDATOR', text: 'Validating result…' });
               break;
             case ExecutionState.STEP_OK:
-              skip = false;
+              setLiveStatus({ actor: 'VALIDATOR', text: 'Result validated' });
               break;
             case ExecutionState.STEP_FAIL:
               skip = false;
@@ -282,6 +374,11 @@ const SidePanel = () => {
     },
     [appendMessage],
   );
+
+  const handleBoot = useCallback(() => {
+    chrome.runtime.sendMessage({ type: 'setup_executor' }).catch(() => {});
+    setIsBooted(true);
+  }, []);
 
   // Stop heartbeat and close connection
   const stopConnection = useCallback(() => {
@@ -549,6 +646,14 @@ const SidePanel = () => {
     }
   };
 
+  const handleMarkdownSnapshot = async () => {
+    if (!inputEnabled || isHistoricalSession) return;
+    await handleSendMessage(
+      'Extract the main content of the current page as clean markdown. Include the page title as an h1, preserve headings, key links (as [text](url)), and important text. Omit navigation menus, cookie banners, ads, footers, and boilerplate. Return only the markdown, no extra commentary.',
+      'Snapshot → markdown',
+    );
+  };
+
   const handleSendMessage = async (text: string, displayText?: string) => {
     console.log('handleSendMessage', text);
 
@@ -570,20 +675,40 @@ const SidePanel = () => {
       return;
     }
 
+    // Detect batch mode: 2+ URL lines + at least 1 instruction line
+    const batch = parseBatchInput(trimmedText);
+    const effectiveTask = batch ? `${batch.urls[0]}\n${batch.instruction}` : trimmedText;
+    const effectiveDisplay = batch
+      ? `Batch · ${batch.urls.length} URLs: ${batch.instruction.slice(0, 40)}${batch.instruction.length > 40 ? '…' : ''}`
+      : (displayText ?? trimmedText);
+    if (batch) {
+      batchQueueRef.current = { ...batch, index: 0 };
+    }
+
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tabId = tabs[0]?.id;
+      const activeTab = tabs[0];
+      const tabId = activeTab?.id;
       if (!tabId) {
         throw new Error('No active tab found');
       }
+      activeTabIdRef.current = tabId;
+
+      // Prepend current page context so the planner knows where the user is without a navigation step
+      const pageCtx =
+        activeTab?.url && !activeTab.url.startsWith('chrome://') && !activeTab.url.startsWith('chrome-extension://')
+          ? `[Current page: "${activeTab.title ?? ''}" | ${activeTab.url} | tab_id: ${tabId}]\n`
+          : '';
+      const taskWithContext = pageCtx + effectiveTask;
 
       setInputEnabled(false);
       setShowStopButton(true);
 
-      // Create a new chat session for this task if not in follow-up mode
-      if (!isFollowUpMode) {
-        // Use display text for session title if available, otherwise use full text
-        const titleText = displayText || text;
+      // Create a new chat session for this task if not in follow-up mode,
+      // unless we're continuing an existing historical session (sessionIdRef already set).
+      if (!isFollowUpMode && !sessionIdRef.current) {
+        // Use effective display text for session title
+        const titleText = effectiveDisplay;
         const newSession = await chatHistoryStore.createSession(
           titleText.substring(0, 50) + (titleText.length > 50 ? '...' : ''),
         );
@@ -597,7 +722,7 @@ const SidePanel = () => {
 
       const userMessage = {
         actor: Actors.USER,
-        content: displayText || text, // Use display text for chat UI, full text for background service
+        content: effectiveDisplay,
         timestamp: Date.now(),
       };
 
@@ -614,20 +739,20 @@ const SidePanel = () => {
         // Send as follow-up task
         await sendMessage({
           type: 'follow_up_task',
-          task: text,
+          task: taskWithContext,
           taskId: sessionIdRef.current,
           tabId,
         });
-        console.log('follow_up_task sent', text, tabId, sessionIdRef.current);
+        console.log('follow_up_task sent', taskWithContext, tabId, sessionIdRef.current);
       } else {
         // Send as new task
         await sendMessage({
           type: 'new_task',
-          task: text,
+          task: taskWithContext,
           taskId: sessionIdRef.current,
           tabId,
         });
-        console.log('new_task sent', text, tabId, sessionIdRef.current);
+        console.log('new_task sent', taskWithContext, tabId, sessionIdRef.current);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -686,11 +811,38 @@ const SidePanel = () => {
 
   const handleLoadHistory = async () => {
     await loadChatSessions();
+    setShowResults(false);
+    setShowWatches(false);
+    setShowSchedules(false);
     setShowHistory(true);
+  };
+
+  const handleOpenResults = () => {
+    setShowHistory(false);
+    setShowWatches(false);
+    setShowSchedules(false);
+    setShowResults(true);
+  };
+
+  const handleOpenWatches = () => {
+    setShowHistory(false);
+    setShowResults(false);
+    setShowSchedules(false);
+    setShowWatches(true);
+  };
+
+  const handleOpenSchedules = () => {
+    setShowHistory(false);
+    setShowResults(false);
+    setShowWatches(false);
+    setShowSchedules(true);
   };
 
   const handleBackToChat = (reset = false) => {
     setShowHistory(false);
+    setShowResults(false);
+    setShowWatches(false);
+    setShowSchedules(false);
     if (reset) {
       setCurrentSessionId(null);
       setMessages([]);
@@ -698,6 +850,12 @@ const SidePanel = () => {
       setIsHistoricalSession(false);
     }
   };
+
+  const handleContinueSession = useCallback(() => {
+    setIsHistoricalSession(false);
+    // currentSessionId / sessionIdRef already point to the loaded session —
+    // handleSendMessage will reuse them instead of creating a new session.
+  }, []);
 
   const handleSessionSelect = async (sessionId: string) => {
     try {
@@ -727,91 +885,6 @@ const SidePanel = () => {
       console.error('Failed to delete session:', error);
     }
   };
-
-  const handleSessionBookmark = async (sessionId: string) => {
-    try {
-      const fullSession = await chatHistoryStore.getSession(sessionId);
-
-      if (fullSession && fullSession.messages.length > 0) {
-        // Get the session title
-        const sessionTitle = fullSession.title;
-        // Get the first 8 words of the title
-        const title = sessionTitle.split(' ').slice(0, 8).join(' ');
-
-        // Get the first message content (the task)
-        const taskContent = fullSession.messages[0]?.content || '';
-
-        // Add to favorites storage
-        await favoritesStorage.addPrompt(title, taskContent);
-
-        // Update favorites in the UI
-        const prompts = await favoritesStorage.getAllPrompts();
-        setFavoritePrompts(prompts);
-
-        // Return to chat view after pinning
-        handleBackToChat(true);
-      }
-    } catch (error) {
-      console.error('Failed to pin session to favorites:', error);
-    }
-  };
-
-  const handleBookmarkSelect = (content: string) => {
-    if (setInputTextRef.current) {
-      setInputTextRef.current(content);
-    }
-  };
-
-  const handleBookmarkUpdateTitle = async (id: number, title: string) => {
-    try {
-      await favoritesStorage.updatePromptTitle(id, title);
-
-      // Update favorites in the UI
-      const prompts = await favoritesStorage.getAllPrompts();
-      setFavoritePrompts(prompts);
-    } catch (error) {
-      console.error('Failed to update favorite prompt title:', error);
-    }
-  };
-
-  const handleBookmarkDelete = async (id: number) => {
-    try {
-      await favoritesStorage.removePrompt(id);
-
-      // Update favorites in the UI
-      const prompts = await favoritesStorage.getAllPrompts();
-      setFavoritePrompts(prompts);
-    } catch (error) {
-      console.error('Failed to delete favorite prompt:', error);
-    }
-  };
-
-  const handleBookmarkReorder = async (draggedId: number, targetId: number) => {
-    try {
-      // Directly pass IDs to storage function - it now handles the reordering logic
-      await favoritesStorage.reorderPrompts(draggedId, targetId);
-
-      // Fetch the updated list from storage to get the new IDs and reflect the authoritative order
-      const updatedPromptsFromStorage = await favoritesStorage.getAllPrompts();
-      setFavoritePrompts(updatedPromptsFromStorage);
-    } catch (error) {
-      console.error('Failed to reorder favorite prompts:', error);
-    }
-  };
-
-  // Load favorite prompts from storage
-  useEffect(() => {
-    const loadFavorites = async () => {
-      try {
-        const prompts = await favoritesStorage.getAllPrompts();
-        setFavoritePrompts(prompts);
-      } catch (error) {
-        console.error('Failed to load favorite prompts:', error);
-      }
-    };
-
-    loadFavorites();
-  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1000,31 +1073,57 @@ const SidePanel = () => {
   };
 
   return (
-    <div>
+    <div
+      data-theme={isDarkMode ? 'dark' : undefined}
+      style={{
+        height: '100vh',
+        overflow: 'hidden',
+        background: 'var(--bg)',
+        fontFamily: 'Manrope, sans-serif',
+        position: 'relative',
+      }}>
+      {/* Boot screen — fades out after boot */}
       <div
-        className={`flex h-screen flex-col ${isDarkMode ? 'bg-slate-900' : "bg-[url('/bg.jpg')] bg-cover bg-no-repeat"} overflow-hidden border ${isDarkMode ? 'border-sky-800' : 'border-[rgb(186,230,253)]'} rounded-2xl`}>
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 10,
+          opacity: isBooted ? 0 : 1,
+          transition: 'opacity 0.3s',
+          pointerEvents: isBooted ? 'none' : 'auto',
+        }}>
+        <BootScreen onBoot={handleBoot} />
+      </div>
+
+      {/* Chat shell — fades in after boot */}
+      <div className="flex h-full flex-col" style={{ opacity: isBooted ? 1 : 0, transition: 'opacity 0.3s' }}>
+        <TopBar
+          isDarkMode={isDarkMode}
+          onToggleDark={() => setIsDarkMode(prev => !prev)}
+          isAgentActive={showStopButton}
+        />
         <header className="header relative">
           <div className="header-logo">
-            {showHistory ? (
+            {showHistory || showResults || showWatches || showSchedules ? (
               <button
                 type="button"
                 onClick={() => handleBackToChat(false)}
-                className={`${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-400 hover:text-sky-500'} cursor-pointer`}
+                className="header-icon cursor-pointer"
                 aria-label={t('nav_back_a11y')}>
                 {t('nav_back')}
               </button>
             ) : (
-              <img src="/icon-128.png" alt="Extension Logo" className="size-6" />
+              <div className="dot-logo" style={{ width: 10, height: 10 }} />
             )}
           </div>
           <div className="header-icons">
-            {!showHistory && (
+            {!showHistory && !showResults && !showWatches && !showSchedules && (
               <>
                 <button
                   type="button"
                   onClick={handleNewChat}
                   onKeyDown={e => e.key === 'Enter' && handleNewChat()}
-                  className={`header-icon ${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-400 hover:text-sky-500'} cursor-pointer`}
+                  className="header-icon cursor-pointer"
                   aria-label={t('nav_newChat_a11y')}
                   tabIndex={0}>
                   <PiPlusBold size={20} />
@@ -1033,38 +1132,89 @@ const SidePanel = () => {
                   type="button"
                   onClick={handleLoadHistory}
                   onKeyDown={e => e.key === 'Enter' && handleLoadHistory()}
-                  className={`header-icon ${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-400 hover:text-sky-500'} cursor-pointer`}
+                  className="header-icon cursor-pointer"
                   aria-label={t('nav_loadHistory_a11y')}
                   tabIndex={0}>
                   <GrHistory size={20} />
                 </button>
+                <button
+                  type="button"
+                  onClick={handleOpenResults}
+                  onKeyDown={e => e.key === 'Enter' && handleOpenResults()}
+                  className="header-icon cursor-pointer"
+                  aria-label="Saved results"
+                  tabIndex={0}>
+                  <FiDatabase size={18} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenWatches}
+                  onKeyDown={e => e.key === 'Enter' && handleOpenWatches()}
+                  className="header-icon cursor-pointer"
+                  aria-label="Web watches"
+                  title="Web watches"
+                  tabIndex={0}>
+                  <FiBell size={17} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenSchedules}
+                  onKeyDown={e => e.key === 'Enter' && handleOpenSchedules()}
+                  className="header-icon cursor-pointer"
+                  aria-label="Scheduled tasks"
+                  title="Scheduled tasks"
+                  tabIndex={0}>
+                  <FiClock size={17} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleMarkdownSnapshot}
+                  onKeyDown={e => e.key === 'Enter' && handleMarkdownSnapshot()}
+                  className="header-icon cursor-pointer"
+                  aria-label="Snapshot page as markdown"
+                  title="Snapshot page as markdown"
+                  tabIndex={0}
+                  style={{ opacity: inputEnabled && !isHistoricalSession ? 1 : 0.35 }}>
+                  <FiFileText size={18} />
+                </button>
               </>
             )}
-            <a
-              href="https://discord.gg/NN3ABHggMK"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`header-icon ${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-400 hover:text-sky-500'}`}>
-              <RxDiscordLogo size={20} />
-            </a>
             <button
               type="button"
               onClick={() => chrome.runtime.openOptionsPage()}
               onKeyDown={e => e.key === 'Enter' && chrome.runtime.openOptionsPage()}
-              className={`header-icon ${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-400 hover:text-sky-500'} cursor-pointer`}
+              className="header-icon cursor-pointer"
               aria-label={t('nav_settings_a11y')}
               tabIndex={0}>
               <FiSettings size={20} />
             </button>
           </div>
         </header>
-        {showHistory ? (
+        {showWatches ? (
+          <div className="flex-1 overflow-hidden">
+            <WatchList onClose={() => setShowWatches(false)} />
+          </div>
+        ) : showSchedules ? (
+          <div className="flex-1 overflow-hidden">
+            <ScheduledTaskList
+              onClose={() => setShowSchedules(false)}
+              onRunTask={taskDescription => {
+                setShowSchedules(false);
+                handleSendMessage(taskDescription);
+              }}
+            />
+          </div>
+        ) : showResults ? (
+          <div className="flex-1 overflow-hidden">
+            <ResultsList onClose={() => setShowResults(false)} />
+          </div>
+        ) : showHistory ? (
           <div className="flex-1 overflow-hidden">
             <ChatHistoryList
               sessions={chatSessions}
               onSessionSelect={handleSessionSelect}
               onSessionDelete={handleSessionDelete}
-              onSessionBookmark={handleSessionBookmark}
+              onSessionBookmark={() => {}}
               visible={true}
               isDarkMode={isDarkMode}
             />
@@ -1073,10 +1223,9 @@ const SidePanel = () => {
           <>
             {/* Show loading state while checking model configuration */}
             {hasConfiguredModels === null && (
-              <div
-                className={`flex flex-1 items-center justify-center p-8 ${isDarkMode ? 'text-sky-300' : 'text-sky-600'}`}>
+              <div className="flex flex-1 items-center justify-center p-8 text-muted">
                 <div className="text-center">
-                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-sky-400 border-t-transparent"></div>
+                  <div className="mx-auto mb-4 size-8 animate-spin rounded-full border-2 border-amber border-t-transparent"></div>
                   <p>{t('status_checkingConfig')}</p>
                 </div>
               </div>
@@ -1084,38 +1233,17 @@ const SidePanel = () => {
 
             {/* Show setup message when no models are configured */}
             {hasConfiguredModels === false && (
-              <div
-                className={`flex flex-1 items-center justify-center p-8 ${isDarkMode ? 'text-sky-300' : 'text-sky-600'}`}>
+              <div className="flex flex-1 items-center justify-center p-8 text-muted">
                 <div className="max-w-md text-center">
-                  <img src="/icon-128.png" alt="Nanobrowser Logo" className="mx-auto mb-4 size-12" />
-                  <h3 className={`mb-2 text-lg font-semibold ${isDarkMode ? 'text-sky-200' : 'text-sky-700'}`}>
-                    {t('welcome_title')}
-                  </h3>
+                  <div className="dot-logo mx-auto mb-6" style={{ width: 36, height: 36 }} />
+                  <h3 className="mb-2 text-lg font-semibold text-ink">{t('welcome_title')}</h3>
                   <p className="mb-4">{t('welcome_instruction')}</p>
                   <button
                     onClick={() => chrome.runtime.openOptionsPage()}
-                    className={`my-4 rounded-lg px-4 py-2 font-medium transition-colors ${
-                      isDarkMode ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-sky-500 text-white hover:bg-sky-600'
-                    }`}>
+                    className="my-4 rounded px-4 py-2 font-medium transition-opacity hover:opacity-90"
+                    style={{ background: 'var(--accent)', color: 'var(--bg)' }}>
                     {t('welcome_openSettings')}
                   </button>
-                  <div className="mt-4 text-sm opacity-75">
-                    <a
-                      href="https://github.com/nanobrowser/nanobrowser?tab=readme-ov-file#-quick-start"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-700 hover:text-sky-600'}`}>
-                      {t('welcome_quickStart')}
-                    </a>
-                    <span className="mx-2">•</span>
-                    <a
-                      href="https://discord.gg/NN3ABHggMK"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-700 hover:text-sky-600'}`}>
-                      {t('welcome_joinCommunity')}
-                    </a>
-                  </div>
                 </div>
               </div>
             )}
@@ -1125,8 +1253,24 @@ const SidePanel = () => {
               <>
                 {messages.length === 0 && (
                   <>
-                    <div
-                      className={`border-t ${isDarkMode ? 'border-sky-900' : 'border-sky-100'} mb-2 p-2 shadow-sm backdrop-blur-sm`}>
+                    <div className="flex-1 overflow-y-auto flex flex-col">
+                      <div className="flex flex-col items-center px-6 pt-10 pb-4">
+                        <div className="dot-logo mb-3" style={{ width: 14, height: 14 }} />
+                        <div
+                          className="font-display mb-1"
+                          style={{ fontSize: 22, letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1 }}>
+                          DOT
+                        </div>
+                        <div className="label-mono mt-1" style={{ color: 'var(--muted)' }}>
+                          YOUR PERSONAL AGENT
+                        </div>
+                      </div>
+                      <WorkflowPicker
+                        onSendMessage={handleSendMessage}
+                        disabled={!inputEnabled || isHistoricalSession}
+                      />
+                    </div>
+                    <div className="border-t border-line p-3 backdrop-blur-sm shrink-0">
                       <ChatInput
                         onSendMessage={handleSendMessage}
                         onStopTask={handleStopTask}
@@ -1143,28 +1287,45 @@ const SidePanel = () => {
                         onReplay={handleReplay}
                       />
                     </div>
-                    <div className="flex-1 overflow-y-auto">
-                      <BookmarkList
-                        bookmarks={favoritePrompts}
-                        onBookmarkSelect={handleBookmarkSelect}
-                        onBookmarkUpdateTitle={handleBookmarkUpdateTitle}
-                        onBookmarkDelete={handleBookmarkDelete}
-                        onBookmarkReorder={handleBookmarkReorder}
-                        isDarkMode={isDarkMode}
-                      />
-                    </div>
                   </>
                 )}
                 {messages.length > 0 && (
-                  <div
-                    className={`scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth p-2 ${isDarkMode ? 'bg-slate-900/80' : ''}`}>
+                  <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth p-3">
                     <MessageList messages={messages} isDarkMode={isDarkMode} />
+                    {liveStatus && <LiveStatusBar actor={liveStatus.actor} text={liveStatus.text} />}
                     <div ref={messagesEndRef} />
                   </div>
                 )}
-                {messages.length > 0 && (
+                {messages.length > 0 && isHistoricalSession && (
                   <div
-                    className={`border-t ${isDarkMode ? 'border-sky-900' : 'border-sky-100'} p-2 shadow-sm backdrop-blur-sm`}>
+                    className="flex items-center justify-between px-3 shrink-0"
+                    style={{
+                      paddingTop: 7,
+                      paddingBottom: 7,
+                      borderTop: '1px solid var(--line)',
+                      background: 'var(--surface)',
+                    }}>
+                    <span className="label-mono" style={{ color: 'var(--muted)' }}>
+                      PAST SESSION
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleContinueSession}
+                      className="label-mono"
+                      style={{
+                        color: 'var(--accent)',
+                        background: 'transparent',
+                        border: '1px solid var(--accent)',
+                        borderRadius: 3,
+                        padding: '2px 8px',
+                        cursor: 'pointer',
+                      }}>
+                      CONTINUE
+                    </button>
+                  </div>
+                )}
+                {messages.length > 0 && (
+                  <div className="border-t border-line p-3 backdrop-blur-sm shrink-0">
                     <ChatInput
                       onSendMessage={handleSendMessage}
                       onStopTask={handleStopTask}

@@ -6,6 +6,8 @@ import {
   generalSettingsStore,
   llmProviderStore,
   analyticsSettingsStore,
+  watchStore,
+  scheduledTaskStore,
 } from '@extension/storage';
 import { t } from '@extension/i18n';
 import BrowserContext from './browser/context';
@@ -66,11 +68,155 @@ analyticsSettingsStore.subscribe(() => {
   });
 });
 
-// Listen for simple messages (e.g., from options page)
-chrome.runtime.onMessage.addListener(() => {
-  // Handle other message types if needed in the future
-  // Return false if response is not sent asynchronously
-  // return false;
+// Register context menu on install and startup
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: 'dot-ask-about',
+    title: 'Ask Dot about "%s"',
+    contexts: ['selection'],
+  });
+  registerActiveAlarms().catch(e => logger.error('registerActiveAlarms failed:', e));
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  registerActiveAlarms().catch(e => logger.error('registerActiveAlarms failed:', e));
+});
+
+async function registerActiveAlarms() {
+  const watches = await watchStore.getAll();
+  for (const watch of watches) {
+    if (watch.active) {
+      const existing = await chrome.alarms.get(`dot-watch-${watch.id}`);
+      if (!existing) {
+        chrome.alarms.create(`dot-watch-${watch.id}`, { delayInMinutes: watch.intervalMinutes });
+      }
+    }
+  }
+  const tasks = await scheduledTaskStore.getAll();
+  for (const task of tasks) {
+    if (task.active && task.nextRunAt) {
+      const existing = await chrome.alarms.get(`dot-task-${task.id}`);
+      if (!existing) {
+        const delayMs = task.nextRunAt - Date.now();
+        const delayMinutes = Math.max(1, delayMs / 60000);
+        chrome.alarms.create(`dot-task-${task.id}`, { delayInMinutes: delayMinutes });
+      }
+    }
+  }
+}
+
+// Context menu click — store selected text for the side panel to pick up
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'dot-ask-about' && info.selectionText) {
+    chrome.storage.session.set({
+      dotContextMenuPending: {
+        text: info.selectionText,
+        pageUrl: info.pageUrl ?? '',
+        timestamp: Date.now(),
+      },
+    });
+    if (tab?.id) {
+      chrome.sidePanel.open({ tabId: tab.id }).catch(e => logger.error('Failed to open side panel:', e));
+    }
+  }
+});
+
+// Alarm handler — web watches and scheduled tasks
+chrome.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name.startsWith('dot-watch-')) {
+    const watchId = alarm.name.slice('dot-watch-'.length);
+    await checkWatch(watchId);
+  } else if (alarm.name.startsWith('dot-task-')) {
+    const taskId = alarm.name.slice('dot-task-'.length);
+    await triggerScheduledTask(taskId);
+  }
+});
+
+async function checkWatch(watchId: string) {
+  const watches = await watchStore.getAll();
+  const watch = watches.find(w => w.id === watchId);
+  if (!watch || !watch.active) return;
+
+  try {
+    const response = await fetch(watch.url);
+    const html = await response.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 10000);
+
+    if (watch.lastSnapshot !== null && text !== watch.lastSnapshot) {
+      chrome.notifications.create(`watch-changed-${watchId}-${Date.now()}`, {
+        type: 'basic',
+        iconUrl: 'icon-128.png',
+        title: 'Dot — Page Changed',
+        message: `"${watch.label}" has new content`,
+      });
+    }
+
+    await watchStore.update(watchId, { lastSnapshot: text, lastChecked: Date.now() });
+  } catch (e) {
+    logger.error('Watch check failed:', e);
+  }
+
+  // Re-arm alarm for next interval
+  chrome.alarms.create(`dot-watch-${watchId}`, { delayInMinutes: watch.intervalMinutes });
+}
+
+async function triggerScheduledTask(taskId: string) {
+  const tasks = await scheduledTaskStore.getAll();
+  const task = tasks.find(t => t.id === taskId);
+  if (!task || !task.active) return;
+
+  const nextRunAt = Date.now() + task.intervalMinutes * 60 * 1000;
+  await scheduledTaskStore.update(taskId, { lastRunAt: Date.now(), nextRunAt });
+
+  chrome.storage.session.set({
+    dotPendingScheduledTask: {
+      taskId: task.id,
+      label: task.label,
+      taskDescription: task.taskDescription,
+      timestamp: Date.now(),
+    },
+  });
+
+  chrome.notifications.create(`task-due-${taskId}-${Date.now()}`, {
+    type: 'basic',
+    iconUrl: 'icon-128.png',
+    title: 'Dot — Scheduled Task Ready',
+    message: `"${task.label}" is ready to run`,
+  });
+
+  // Re-arm for next run
+  chrome.alarms.create(`dot-task-${taskId}`, { delayInMinutes: task.intervalMinutes });
+}
+
+// Listen for simple messages (e.g., from options page and new UI components)
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'register_watch') {
+    chrome.alarms.create(`dot-watch-${message.watchId}`, { delayInMinutes: message.intervalMinutes });
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === 'unregister_watch') {
+    chrome.alarms.clear(`dot-watch-${message.watchId}`);
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === 'register_scheduled_task') {
+    chrome.alarms.create(`dot-task-${message.taskId}`, { delayInMinutes: message.intervalMinutes });
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === 'unregister_scheduled_task') {
+    chrome.alarms.clear(`dot-task-${message.taskId}`);
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
 });
 
 // Setup connection listener for long-lived connections (e.g., side panel)
