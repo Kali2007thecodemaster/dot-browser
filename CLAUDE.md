@@ -1,9 +1,9 @@
 # CLAUDE.md — Dot Build Specification
 
-> **Project**: Dot — Personal AI web agent (Nanobrowser fork)
+> **Project**: Dot — Personal AI web agent
 > **Author**: Juan Kali — University of Regina, B.Sc. Math & CS
 > **Stack**: TypeScript · React 18 · Tailwind · Vite · Puppeteer · LangChain.js · Chrome MV3
-> **Upstream**: https://github.com/nanobrowser/nanobrowser (Apache 2.0)
+> **Credits**: Built on [Nanobrowser](https://github.com/nanobrowser/nanobrowser) (Apache 2.0)
 
 ---
 

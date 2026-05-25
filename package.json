@@ -1,11 +1,11 @@
 {
-  "name": "nanobrowser",
+  "name": "dot-browser",
   "version": "0.1.0",
-  "description": "AI web automation tool",
+  "description": "Personal AI web agent — Chrome extension",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nanobrowser/nanobrowser.git"
+    "url": "https://github.com/Kali2007thecodemaster/dot-browser.git"
   },
   "type": "module",
   "scripts": {

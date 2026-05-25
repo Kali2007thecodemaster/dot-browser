@@ -1,36 +1,37 @@
-# Contributing to NanoBrowser
+# Contributing to Dot
 
-We deeply appreciate your interest in contributing to NanoBrowser! Every contribution helps make Nanobrowser more powerful and accessible for everyone.
+Thanks for your interest in contributing. Dot is a personal project, but pull requests, bug reports, and ideas are welcome.
 
 ## Quick Start
 
 1. Fork and clone the repository
-2. Create a new branch (`git checkout -b feature-name`)
+2. Create a branch: `git checkout -b feat/your-feature`
 3. Make your changes
-4. Submit a Pull Request
+4. Run type-check before submitting: `pnpm -F chrome-extension type-check`
+5. Open a pull request
 
-## How Can I Contribute?
+## Reporting Bugs
 
-### Reporting Bugs
 - Search existing issues first
-- Include:
-  - Clear description
-  - Steps to reproduce
-  - Environment details (OS, browser version)
-  - Screenshots if applicable
+- Include: clear description, steps to reproduce, OS + Chrome version, screenshots if applicable
 
-### Suggesting Enhancements
-- Open an issue with a clear title and detailed description
-- Explain why this enhancement would be useful
+## Code Style
 
-### Code Contributions
-1. Follow the existing code style
-2. Write clear commit messages in present tense ("Add feature" not "Added feature")
-3. Test your changes thoroughly
-4. Update documentation if needed
-5. Create a Pull Request with a clear description
-6. Be responsive to feedback and address review comments promptly
+- Prettier (2 spaces, single quotes, trailing commas) — enforced on commit via lint-staged
+- ESLint + TypeScript strict mode
+- No new dependencies without discussion
+- No changes to `turbo.json`, `pnpm-workspace.yaml`, or `tsconfig*` without prior agreement
+
+## Commit Format
+
+```
+feat(scope): description
+fix(scope): description
+refactor(scope): description
+```
+
+Scopes: `ui`, `agent`, `storage`, `workflow`, `config`, `build`
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's license terms.
+By contributing, you agree your contributions are licensed under Apache 2.0.
