@@ -109,20 +109,31 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
         if (response.parsed) {
           return response.parsed;
         }
+
+        // No structured parse, but no exception. Try manual extraction against the raw
+        // content before falling through to the tool_calls path — some providers stuff
+        // the JSON into the message body instead of into a tool call.
+        if (response.raw?.content && typeof response.raw.content === 'string') {
+          const manual = this.manuallyParseResponse(response.raw.content);
+          if (manual) {
+            logger.info('Recovered navigator output via manual JSON extraction');
+            return manual;
+          }
+        }
       } catch (error) {
         if (isAbortedError(error)) {
           throw error;
         }
 
-        // Try to extract JSON from markdown code blocks if parsing failed
+        // Any parse-related exception: try the manual extractor against the raw text.
+        // Broadened from `is not valid JSON` to "any error with raw content" so we
+        // recover from a wider set of provider error wordings (Ollama, custom OpenAI-
+        // compatible endpoints, etc.).
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (
-          errorMessage.includes('is not valid JSON') &&
-          response?.raw?.content &&
-          typeof response.raw.content === 'string'
-        ) {
+        if (response?.raw?.content && typeof response.raw.content === 'string') {
           const parsed = this.manuallyParseResponse(response.raw.content);
           if (parsed) {
+            logger.info('Recovered navigator output via manual JSON extraction after exception');
             return parsed;
           }
         }

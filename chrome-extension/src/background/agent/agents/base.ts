@@ -150,6 +150,18 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
           logger.debug(`[${this.modelName}] Successfully parsed structured output`);
           return response.parsed;
         }
+
+        // No structured parse, but no exception either. Some providers (Ollama, certain
+        // OpenAI-compatible endpoints, some local models) return the JSON in the raw
+        // content instead of the parsed field. Try the manual extraction before giving up.
+        if (response.raw?.content && typeof response.raw.content === 'string') {
+          const manual = this.manuallyParseResponse(response.raw.content);
+          if (manual) {
+            logger.info(`[${this.modelName}] Recovered structured output via manual JSON extraction`);
+            return manual;
+          }
+        }
+
         logger.error('Failed to parse response', response);
         throw new Error('Could not parse response with structured output');
       } catch (error) {
@@ -157,15 +169,14 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
           throw error;
         }
 
-        // Try to extract JSON from raw response manually if possible
+        // Any parse-related exception: try the manual extractor against the raw text.
+        // Was previously gated on errorMessage.includes('is not valid JSON'); broadening
+        // it catches a wider set of provider error wordings.
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (
-          errorMessage.includes('is not valid JSON') &&
-          response?.raw?.content &&
-          typeof response.raw.content === 'string'
-        ) {
+        if (response?.raw?.content && typeof response.raw.content === 'string') {
           const parsed = this.manuallyParseResponse(response.raw.content);
           if (parsed) {
+            logger.info(`[${this.modelName}] Recovered structured output via manual JSON extraction after exception`);
             return parsed;
           }
         }
