@@ -141,8 +141,7 @@ body {
   }
 
   /* Agent response: plain text on the page background.
-     Color follows --text so it's black on light, white on dark.
-     No bubbles, no code-block styling, no colored links — just readable text. */
+     Color follows --text so it's black on light, white on dark. */
   .md-content {
     color: var(--text);
     font-family: 'Manrope', sans-serif;
@@ -155,17 +154,78 @@ body {
   .md-paragraph {
     margin: 0;
   }
+
+  /* Headings — proper size hierarchy. */
+  .md-heading {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 6px 0 2px 0;
+    color: var(--text);
+  }
+  .md-h1 {
+    font-size: 22px;
+  }
+  .md-h2 {
+    font-size: 19px;
+  }
+  .md-h3 {
+    font-size: 17px;
+  }
+
+  /* Lists — with nesting indent. */
   .md-list {
     margin: 0;
-    padding-left: 20px;
+    padding-left: 22px;
   }
   .md-list li {
-    margin: 2px 0;
+    margin: 3px 0;
   }
-  /* Links: same color as body text, just underlined so they're identifiable. */
+  .md-list .md-list {
+    margin-top: 3px;
+  }
+
+  /* Links — same color as body text, underlined. */
   .md-link {
     color: inherit;
     text-decoration: underline;
+  }
+
+  /* Blockquote — left rule + muted italic. */
+  .md-blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 2px 0 2px 12px;
+    margin: 0;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  /* Tables — clean grid with header emphasis. Wrap allows horizontal scroll on
+     narrow side panels without breaking the rest of the layout. */
+  .md-table-wrap {
+    overflow-x: auto;
+    margin: 0;
+  }
+  .md-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .md-table th,
+  .md-table td {
+    border: 1px solid var(--line);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .md-table th {
+    background: var(--surface);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .md-table tbody tr:nth-child(even) td {
+    background: var(--surface);
   }
 
   /* Message action toolbar — copy / retry / edit under each message. */
