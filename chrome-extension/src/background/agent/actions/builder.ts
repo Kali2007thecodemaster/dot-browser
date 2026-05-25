@@ -30,6 +30,7 @@ import {
   listUploadedFilesActionSchema,
   openAiChatActionSchema,
   fetchUrlActionSchema,
+  downloadFileActionSchema,
 } from './schemas';
 import { profileStore, resultsStore, uploadStore } from '@extension/storage';
 import { getWorkflow } from '../../workflows';
@@ -38,6 +39,7 @@ import { createLogger } from '@src/background/log';
 import { ExecutionState, Actors } from '../event/types';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { wrapUntrustedContent } from '../messages/utils';
+import { isUrlAllowed } from '@src/background/browser/util';
 
 const logger = createLogger('Action');
 
@@ -350,6 +352,68 @@ export class ActionBuilder {
       return new ActionResult({ extractedContent: msg, includeInMemory: true });
     }, closeTabActionSchema);
     actions.push(closeTab);
+
+    const downloadFile = new Action(async (input: z.infer<typeof downloadFileActionSchema.schema>) => {
+      const intent = input.intent || `Downloading ${input.filename || input.url}`;
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
+
+      // Defensive: reject URLs the user has blocked. isUrlAllowed runs inside
+      // navigateTo/openTab too, but chrome.downloads bypasses those, so re-check.
+      const browserConfig = this.context.browserContext.getConfig();
+      if (!isUrlAllowed(input.url, browserConfig.allowedUrls, browserConfig.deniedUrls)) {
+        throw new Error(`Download blocked: URL not allowed by policy (${input.url})`);
+      }
+
+      // Kick off the download. saveAs=false uses the user's default downloads folder
+      // without showing a Save-As dialog, which matches the user's "just download it"
+      // intent. The browser will still de-duplicate filename conflicts.
+      const downloadId: number = await new Promise((resolve, reject) => {
+        chrome.downloads.download({ url: input.url, filename: input.filename, saveAs: false }, id => {
+          const err = chrome.runtime.lastError;
+          if (err || id === undefined) {
+            reject(new Error(err?.message || 'chrome.downloads.download returned no id'));
+            return;
+          }
+          resolve(id);
+        });
+      });
+
+      // Wait for completion (or interruption) so the LLM's next step sees the result.
+      // Cap the wait so we don't hang the agent on a stalled download.
+      const TIMEOUT_MS = 60_000;
+      const finalState = await new Promise<'complete' | 'interrupted' | 'timeout'>(resolve => {
+        const timer = setTimeout(() => {
+          chrome.downloads.onChanged.removeListener(listener);
+          resolve('timeout');
+        }, TIMEOUT_MS);
+        const listener = (delta: chrome.downloads.DownloadDelta) => {
+          if (delta.id !== downloadId || !delta.state) return;
+          if (delta.state.current === 'complete') {
+            clearTimeout(timer);
+            chrome.downloads.onChanged.removeListener(listener);
+            resolve('complete');
+          } else if (delta.state.current === 'interrupted') {
+            clearTimeout(timer);
+            chrome.downloads.onChanged.removeListener(listener);
+            resolve('interrupted');
+          }
+        };
+        chrome.downloads.onChanged.addListener(listener);
+      });
+
+      if (finalState === 'interrupted') {
+        const msg = `Download was interrupted (${input.url})`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, msg);
+        return new ActionResult({ error: msg, includeInMemory: true });
+      }
+      const msg =
+        finalState === 'complete'
+          ? `Downloaded ${input.filename || input.url}`
+          : `Download started but not yet finished after ${TIMEOUT_MS / 1000}s: ${input.url}`;
+      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+      return new ActionResult({ extractedContent: msg, includeInMemory: true });
+    }, downloadFileActionSchema);
+    actions.push(downloadFile);
 
     // Content Actions
     // TODO: this is not used currently, need to improve on input size

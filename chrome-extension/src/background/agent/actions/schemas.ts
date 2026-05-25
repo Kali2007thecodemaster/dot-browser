@@ -92,6 +92,20 @@ export const closeTabActionSchema: ActionSchema = {
   }),
 };
 
+export const downloadFileActionSchema: ActionSchema = {
+  name: 'download_file',
+  description:
+    "Download a file (PDF, ZIP, image, etc.) from a direct URL to the user's default downloads folder. Use this when the user asks to download/save a file, or after finding a direct file link on a page. Pass the absolute URL of the file. Optionally pass a filename to suggest one to the browser.",
+  schema: z.object({
+    intent: z.string().default('').describe('purpose of this action'),
+    url: z.string().describe('absolute URL of the file to download'),
+    filename: z
+      .string()
+      .optional()
+      .describe('suggested filename including extension (e.g. "book.pdf"); browser may rename to avoid conflicts'),
+  }),
+};
+
 // Content Actions, not used currently
 // export const extractContentActionSchema: ActionSchema = {
 //   name: 'extract_content',

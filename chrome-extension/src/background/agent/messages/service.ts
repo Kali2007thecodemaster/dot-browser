@@ -1,5 +1,5 @@
 import { type BaseMessage, AIMessage, HumanMessage, type SystemMessage, ToolMessage } from '@langchain/core/messages';
-import { MessageHistory, MessageMetadata } from '@src/background/agent/messages/views';
+import { type ManagedMessage, MessageHistory, MessageMetadata } from '@src/background/agent/messages/views';
 import { createLogger } from '@src/background/log';
 import {
   filterExternalContent,
@@ -271,6 +271,45 @@ export default class MessageManager {
 
     logger.debug(`Total input tokens: ${totalInputTokens}`);
     return messages;
+  }
+
+  /**
+   * Compact message slice intended for the planner.
+   * Returns:
+   *   - all messages tagged messageType='init' (system, task, example tool call, etc.)
+   *   - the last `maxRecent` runtime messages, with the start boundary rewound to a
+   *     HumanMessage so we never orphan a tool_call / tool_response pair (LangChain
+   *     throws if an AIMessage with tool_calls is sent without its ToolMessage reply,
+   *     or vice versa).
+   *
+   * The navigator's full transcript can grow to many tens of thousands of tokens; the
+   * planner only needs recent context plus the original task framing.
+   */
+  public getMessagesForPlanner(maxRecent: number): BaseMessage[] {
+    const initMessages: BaseMessage[] = [];
+    const runtimeMessages: ManagedMessage[] = [];
+
+    for (const m of this.history.messages) {
+      if (!m.message) continue;
+      if (m.metadata.message_type === 'init') {
+        initMessages.push(m.message);
+      } else {
+        runtimeMessages.push(m);
+      }
+    }
+
+    if (runtimeMessages.length <= maxRecent) {
+      return [...initMessages, ...runtimeMessages.map(m => m.message)];
+    }
+
+    let startIdx = runtimeMessages.length - maxRecent;
+    // Rewind to a HumanMessage so the slice begins on a clean boundary.
+    while (startIdx > 0 && !(runtimeMessages[startIdx].message instanceof HumanMessage)) {
+      startIdx--;
+    }
+
+    const recent = runtimeMessages.slice(startIdx).map(m => m.message);
+    return [...initMessages, ...recent];
   }
 
   /**

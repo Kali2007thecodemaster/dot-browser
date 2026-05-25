@@ -2,7 +2,7 @@ import { BaseAgent, type BaseAgentOptions, type ExtraAgentOptions } from './base
 import { createLogger } from '@src/background/log';
 import { z } from 'zod';
 import type { AgentOutput } from '../types';
-import { HumanMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { Actors, ExecutionState } from '../event/types';
 import {
   ChatModelAuthError,
@@ -14,6 +14,7 @@ import {
   isForbiddenError,
   LLM_FORBIDDEN_ERROR_MESSAGE,
   RequestCancelledError,
+  sanitizeErrorForChat,
 } from './errors';
 import { filterExternalContent } from '../messages/utils';
 const logger = createLogger('PlannerAgent');
@@ -53,10 +54,14 @@ export class PlannerAgent extends BaseAgent<typeof plannerOutputSchema, PlannerO
   async execute(): Promise<AgentOutput<PlannerOutput>> {
     try {
       this.context.emitEvent(Actors.PLANNER, ExecutionState.STEP_START, 'Planning...');
-      // get all messages from the message manager, state message should be the last one
-      const messages = this.context.messageManager.getMessages();
-      // Use full message history except the first one
-      const plannerMessages = [this.prompt.getSystemMessage(), ...messages.slice(1)];
+      // Use a compact slice of the navigator's transcript: init framing + the last few
+      // runtime messages. Sending the full history every planningInterval was the main
+      // driver of planner latency on long tasks (see L4).
+      const PLANNER_MAX_RECENT = 12;
+      const compact = this.context.messageManager.getMessagesForPlanner(PLANNER_MAX_RECENT);
+      // Drop the navigator's SystemMessage — we substitute the planner's own system prompt.
+      const withoutNavigatorSystem = compact.filter(m => !(m instanceof SystemMessage));
+      const plannerMessages = [this.prompt.getSystemMessage(), ...withoutNavigatorSystem];
 
       // Remove images from last message if vision is not enabled for planner but vision is enabled
       if (!this.context.options.useVisionForPlanner && this.context.options.useVision) {
@@ -121,7 +126,13 @@ export class PlannerAgent extends BaseAgent<typeof plannerOutputSchema, PlannerO
       }
 
       logger.error(`Planning failed: ${errorMessage}`);
-      this.context.emitEvent(Actors.PLANNER, ExecutionState.STEP_FAIL, `Planning failed: ${errorMessage}`);
+      // Sanitize the chat-facing message — full error is preserved in logs and in the
+      // AgentOutput.error returned below for the executor's failure accounting.
+      this.context.emitEvent(
+        Actors.PLANNER,
+        ExecutionState.STEP_FAIL,
+        sanitizeErrorForChat('Planning failed', errorMessage),
+      );
       return {
         id: this.id,
         error: errorMessage,

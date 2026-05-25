@@ -27,7 +27,9 @@ abstract class BasePrompt {
    * @returns HumanMessage from LangChain
    */
   async buildBrowserStateUserMessage(context: AgentContext): Promise<HumanMessage> {
-    const browserState = await context.browserContext.getState(context.options.useVision);
+    // Reuse the cached state populated earlier in the step (navigator.execute primes it).
+    // Falls back to a full getState only if the cache is empty.
+    const browserState = await context.browserContext.getCachedState(context.options.useVision);
     const rawElementsText = browserState.elementTree.clickableElementsToString(context.options.includeAttributes);
 
     let formattedElementsText = '';

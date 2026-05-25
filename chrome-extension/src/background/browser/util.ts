@@ -92,9 +92,18 @@ export function isUrlAllowed(url: string, allowList: string[], denyList: string[
   }
 }
 
-// Check if a URL is a new tab page (about:blank or chrome://new-tab-page).
+// Check if a URL is a new tab page or otherwise "empty" (no meaningful content yet).
+// Covers Chrome's variants plus the legacy chrome://newtab/ form and an empty string
+// (some Chrome builds report active tabs without a URL until the page loads).
 export function isNewTabPage(url: string): boolean {
-  return url === 'about:blank' || url === 'chrome://new-tab-page' || url === 'chrome://new-tab-page/';
+  if (!url) return true;
+  return (
+    url === 'about:blank' ||
+    url === 'chrome://new-tab-page' ||
+    url === 'chrome://new-tab-page/' ||
+    url === 'chrome://newtab' ||
+    url === 'chrome://newtab/'
+  );
 }
 
 export function capTextLength(text: string, maxLength: number): string {

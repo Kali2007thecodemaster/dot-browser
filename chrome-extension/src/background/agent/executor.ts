@@ -127,9 +127,13 @@ export class Executor {
    */
   async execute(): Promise<void> {
     logger.info(`🚀 Executing task: ${this.tasks[this.tasks.length - 1]}`);
-    // reset the step counter
+    // reset per-task state so a follow-up task can't echo the previous task's answer.
+    // Without clearing finalAnswer, the completion path falls back to the prior task's
+    // result (e.g. user asks "capital of Canada" then "fun fact about NYC" and the
+    // second response is still "Ottawa…").
     const context = this.context;
     context.nSteps = 0;
+    context.finalAnswer = null;
     const allowedMaxSteps = this.context.options.maxSteps;
 
     try {
@@ -153,8 +157,14 @@ export class Executor {
           break;
         }
 
-        // Run planner periodically for guidance
-        if (this.planner && (context.nSteps % context.options.planningInterval === 0 || navigatorDone)) {
+        // Run planner periodically for guidance.
+        // The step-0 planner call is REQUIRED: it sets web_task and can finish pure
+        // Q&A tasks (e.g. "fun fact about Canada") directly via web_task=false +
+        // done=true + final_answer, without bothering the navigator. Skipping it
+        // forces every task through the browser-action agent, which can't answer
+        // knowledge questions.
+        const isPeriodic = context.nSteps % context.options.planningInterval === 0;
+        if (this.planner && (isPeriodic || navigatorDone)) {
           navigatorDone = false;
           latestPlanOutput = await this.runPlanner();
 
@@ -173,11 +183,23 @@ export class Executor {
         }
       }
 
-      // Determine task completion status
-      const isCompleted = latestPlanOutput?.result?.done === true;
+      // Determine task completion status.
+      // Also accept navigatorDone: if the navigator signals done on the very last
+      // allowed step, the for-loop exits before the next periodic planner run can
+      // validate it. Without this fallback the task would be falsely reported as
+      // "max steps reached". The done action's text is in the last actionResult's
+      // extractedContent, so we can still surface a proper final answer.
+      const isCompleted = latestPlanOutput?.result?.done === true || navigatorDone;
 
       if (isCompleted) {
-        // Emit final answer if available, otherwise use task ID
+        // Prefer the planner-validated final answer; fall back to the navigator's
+        // done-action text; last resort is the taskId.
+        if (!this.context.finalAnswer && navigatorDone) {
+          const lastResult = this.context.actionResults[this.context.actionResults.length - 1];
+          if (lastResult?.extractedContent) {
+            this.context.finalAnswer = lastResult.extractedContent;
+          }
+        }
         const finalMessage = this.context.finalAnswer || this.context.taskId;
         this.context.emitEvent(Actors.SYSTEM, ExecutionState.TASK_OK, finalMessage);
 
@@ -238,6 +260,9 @@ export class Executor {
       // Add current browser state to memory
       let positionForPlan = 0;
       if (this.tasks.length > 1 || this.context.nSteps > 0) {
+        // Prime the page-level state cache so addStateMessageToMemory (which now reads
+        // from getCachedState in buildBrowserStateUserMessage) reflects post-action DOM.
+        await this.context.browserContext.getState(this.context.options.useVision);
         await this.navigator.addStateMessageToMemory();
         positionForPlan = this.context.messageManager.length() - 1;
       } else {
@@ -246,6 +271,13 @@ export class Executor {
 
       // Execute planner
       const planOutput = await this.planner.execute();
+      // PlannerAgent.execute() returns {error} for non-classified failures instead of
+      // throwing. Rethrow here so the catch below bumps consecutiveFailures — mirrors
+      // how navigate() handles navOutput.error. Without this, a failing planner is
+      // silently treated as "no plan" and the navigator drifts until MaxStepsReached.
+      if (planOutput.error) {
+        throw new Error(planOutput.error);
+      }
       if (planOutput.result) {
         this.context.messageManager.addPlan(JSON.stringify(planOutput.result), positionForPlan);
       }

@@ -75,6 +75,21 @@ chrome.runtime.onInstalled.addListener(() => {
     title: 'Ask Dot about "%s"',
     contexts: ['selection'],
   });
+  chrome.contextMenus.create({
+    id: 'dot-download-link',
+    title: 'Dot: download this link',
+    contexts: ['link'],
+  });
+  chrome.contextMenus.create({
+    id: 'dot-summarize-page',
+    title: 'Dot: summarize this page',
+    contexts: ['page'],
+  });
+  chrome.contextMenus.create({
+    id: 'dot-fill-form',
+    title: 'Dot: fill this form with my profile',
+    contexts: ['editable'],
+  });
   registerActiveAlarms().catch(e => logger.error('registerActiveAlarms failed:', e));
 });
 
@@ -105,8 +120,17 @@ async function registerActiveAlarms() {
   }
 }
 
-// Context menu click — store selected text for the side panel to pick up
+// Context menu click — store payload for the side panel to pick up.
+// Old "ask about" entry still uses { text, pageUrl } so the side panel quote-prefills it.
+// New entries pass a fully-formed `task` string; the side panel just drops it into
+// the input box for the user to review and send.
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  const openPanel = () => {
+    if (tab?.id) {
+      chrome.sidePanel.open({ tabId: tab.id }).catch(e => logger.error('Failed to open side panel:', e));
+    }
+  };
+
   if (info.menuItemId === 'dot-ask-about' && info.selectionText) {
     chrome.storage.session.set({
       dotContextMenuPending: {
@@ -115,9 +139,50 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         timestamp: Date.now(),
       },
     });
-    if (tab?.id) {
-      chrome.sidePanel.open({ tabId: tab.id }).catch(e => logger.error('Failed to open side panel:', e));
-    }
+    openPanel();
+    return;
+  }
+
+  if (info.menuItemId === 'dot-download-link' && info.linkUrl) {
+    chrome.storage.session.set({
+      dotContextMenuPending: {
+        task: `Download this file: ${info.linkUrl}`,
+        pageUrl: info.pageUrl ?? '',
+        timestamp: Date.now(),
+      },
+    });
+    openPanel();
+    return;
+  }
+
+  if (info.menuItemId === 'dot-summarize-page') {
+    const pageUrl = info.pageUrl || tab?.url || '';
+    chrome.storage.session.set({
+      dotContextMenuPending: {
+        task: pageUrl
+          ? `Summarize the content of this page: ${pageUrl}. Return a concise overview followed by the 5 most important points as bullets.`
+          : 'Summarize the content of the current page. Return a concise overview followed by the 5 most important points as bullets.',
+        pageUrl,
+        timestamp: Date.now(),
+      },
+    });
+    openPanel();
+    return;
+  }
+
+  if (info.menuItemId === 'dot-fill-form') {
+    const pageUrl = info.pageUrl || tab?.url || '';
+    chrome.storage.session.set({
+      dotContextMenuPending: {
+        task: pageUrl
+          ? `Fill the form on ${pageUrl} using my saved profile. Pause before submitting so I can review.`
+          : 'Fill the form on the current page using my saved profile. Pause before submitting so I can review.',
+        pageUrl,
+        timestamp: Date.now(),
+      },
+    });
+    openPanel();
+    return;
   }
 });
 

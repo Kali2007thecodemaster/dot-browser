@@ -288,6 +288,59 @@ export class MaxFailuresReachedError extends Error {
 }
 
 /**
+ * Map low-signal Puppeteer / CDP / LLM error strings to a short, user-friendly chat line.
+ * The original error is still recorded for the LLM and the logs — this only affects
+ * the message rendered to the user in the side panel.
+ *
+ * Patterns covered:
+ *   - "Unknown key" — page.sendKeys received a key not in our alias map
+ *   - Target closed / context destroyed / detached — page navigated mid-action
+ *   - Element not visible / not interactable — DOM mutated between read and click
+ *   - Timeouts — long-running waits that hit their cap
+ *   - JSON / parse / structured-output failures — model returned malformed output
+ * Anything not matched falls through to a truncated single-line slice of the raw
+ * message so we never paste multi-line stack traces into the chat.
+ */
+export function sanitizeErrorForChat(prefix: string, raw: string): string {
+  const oneLine = (raw.split('\n')[0] || '').trim();
+  const lower = oneLine.toLowerCase();
+
+  if (lower.includes('unknown key')) {
+    return `${prefix}: unsupported key, retrying`;
+  }
+  if (
+    lower.includes('target closed') ||
+    lower.includes('execution context was destroyed') ||
+    lower.includes('cannot find context') ||
+    lower.includes('frame got detached') ||
+    lower.includes('node is detached from document')
+  ) {
+    return `${prefix}: page changed, retrying`;
+  }
+  if (
+    lower.includes('element is not visible') ||
+    lower.includes('not clickable') ||
+    lower.includes('not interactable')
+  ) {
+    return `${prefix}: element not ready, retrying`;
+  }
+  if (lower.includes('timeout') || lower.includes('timed out')) {
+    return `${prefix}: timed out, retrying`;
+  }
+  if (
+    lower.includes('not valid json') ||
+    lower.includes('could not parse response') ||
+    lower.includes('failed to invoke') ||
+    lower.includes('structured output')
+  ) {
+    return `${prefix}: model output unreadable, retrying`;
+  }
+
+  const trimmed = oneLine.length > 160 ? `${oneLine.slice(0, 157)}…` : oneLine;
+  return `${prefix}: ${trimmed}`;
+}
+
+/**
  * Custom error class for when LLM response cannot be parsed into expected format
  */
 export class ResponseParseError extends Error {

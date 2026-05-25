@@ -20,7 +20,12 @@ class ChatLlama extends ChatOpenAI {
   // Override the completionWithRetry method to intercept and transform the response
   async completionWithRetry(request: any, options?: any): Promise<any> {
     try {
-      // Make the request using the parent's implementation
+      // Make the request using the parent's implementation.
+      // completionWithRetry is internal to ChatOpenAI — it exists at runtime but is no
+      // longer surfaced on the public type in current @langchain/openai versions, so
+      // TS can't see it through `super`. The override has been working at runtime, so
+      // we keep the behavior and silence the type-only complaint.
+      // @ts-expect-error -- super.completionWithRetry is untyped on ChatOpenAI
       const response = await super.completionWithRetry(request, options);
 
       // Check if this is a Llama API response format

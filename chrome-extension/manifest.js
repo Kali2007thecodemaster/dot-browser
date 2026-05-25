@@ -72,6 +72,7 @@ const manifest = withOperaSidebar(
       'alarms',
       'notifications',
       'contextMenus',
+      'downloads',
     ],
     options_page: 'options/index.html',
     background: {

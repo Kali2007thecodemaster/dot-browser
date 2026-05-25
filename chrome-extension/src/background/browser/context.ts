@@ -16,6 +16,9 @@ export default class BrowserContext {
   private _config: BrowserContextConfig;
   private _currentTabId: number | null = null;
   private _attachedPages: Map<number, Page> = new Map();
+  // Per-tab in-flight _getOrCreatePage promises. Used to serialize concurrent callers
+  // so we never run two detach→create paths for the same tabId in parallel.
+  private _pendingPages: Map<number, Promise<Page>> = new Map();
 
   constructor(config: Partial<BrowserContextConfig>) {
     this._config = { ...DEFAULT_BROWSER_CONTEXT_CONFIG, ...config };
@@ -38,19 +41,48 @@ export default class BrowserContext {
     if (!tab.id) {
       throw new Error('Tab ID is not available');
     }
+    const tabId = tab.id;
 
-    const existingPage = this._attachedPages.get(tab.id);
-    if (existingPage) {
-      logger.info('getOrCreatePage', tab.id, 'already attached');
+    // If a creation/detach is in flight for this tab, piggyback on it (non-force) or
+    // wait for it to settle (force). Without this guard, two async paths (e.g.
+    // navigateTo + a queued tabs.onUpdated handler) can both observe the existing
+    // page, both call detachPuppeteer(), and both create a new Page object pointing
+    // at the same CDP target — orphaning one with a live debugger session.
+    const inflight = this._pendingPages.get(tabId);
+    if (inflight) {
       if (!forceUpdate) {
-        return existingPage;
+        return inflight;
       }
-      // detach the page and remove it from the attached pages if forceUpdate is true
-      await existingPage.detachPuppeteer();
-      this._attachedPages.delete(tab.id);
+      // For forceUpdate we still need a fresh Page, but wait for the prior call to
+      // finish first so it can't race with our detach.
+      await inflight.catch(() => undefined);
     }
-    logger.info('getOrCreatePage', tab.id, 'creating new page');
-    return new Page(tab.id, tab.url || '', tab.title || '', this._config);
+
+    const work = (async () => {
+      const existingPage = this._attachedPages.get(tabId);
+      if (existingPage) {
+        logger.info('getOrCreatePage', tabId, 'already attached');
+        if (!forceUpdate) {
+          return existingPage;
+        }
+        // detach the page and remove it from the attached pages if forceUpdate is true
+        await existingPage.detachPuppeteer();
+        this._attachedPages.delete(tabId);
+      }
+      logger.info('getOrCreatePage', tabId, 'creating new page');
+      return new Page(tabId, tab.url || '', tab.title || '', this._config);
+    })();
+
+    this._pendingPages.set(tabId, work);
+    try {
+      return await work;
+    } finally {
+      // Only clear the slot if our work is still the registered one — a later
+      // forceUpdate may have replaced us mid-flight.
+      if (this._pendingPages.get(tabId) === work) {
+        this._pendingPages.delete(tabId);
+      }
+    }
   }
 
   public async cleanup(): Promise<void> {
@@ -263,6 +295,30 @@ export default class BrowserContext {
   public async openTab(url: string): Promise<Page> {
     if (!isUrlAllowed(url, this._config.allowedUrls, this._config.deniedUrls)) {
       throw new URLNotAllowedError(`Open tab failed. URL: ${url} is not allowed`);
+    }
+
+    // Empty / unattachable-tab reuse: if the user's current active tab can't be driven
+    // by Puppeteer (chrome://newtab, chrome://new-tab-page, about:blank, third-party
+    // new-tab-page extensions, chrome-extension:// pages, etc.), navigate it in place
+    // instead of stacking a fresh tab next to it. Page._validWebPage already encodes
+    // exactly this "drivable web page" criterion, so reusing that flag also covers all
+    // the NTP variants we'd otherwise have to enumerate by URL.
+    try {
+      const currentPage = await this.getCurrentPage();
+      if (currentPage && !currentPage.validWebPage) {
+        const tabId = currentPage.tabId;
+        logger.info('openTab: reusing unattachable active tab', tabId, '→', url);
+        await chrome.tabs.update(tabId, { url, active: true });
+        await this.waitForTabEvents(tabId);
+        const updatedTab = await chrome.tabs.get(tabId);
+        const page = await this._getOrCreatePage(updatedTab, true);
+        await this.attachPage(page);
+        this._currentTabId = tabId;
+        return page;
+      }
+    } catch (error) {
+      // Fall through to creating a new tab if anything goes wrong with reuse.
+      logger.warning('openTab: empty-tab reuse check failed, falling back to new tab', error);
     }
 
     // Create the new tab

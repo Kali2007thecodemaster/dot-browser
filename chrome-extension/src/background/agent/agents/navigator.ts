@@ -21,6 +21,7 @@ import {
   ResponseParseError,
   LLM_FORBIDDEN_ERROR_MESSAGE,
   RequestCancelledError,
+  sanitizeErrorForChat,
 } from './errors';
 import { calcBranchPathHashSet } from '@src/background/browser/dom/views';
 import { type BrowserState, BrowserStateHistory, URLNotAllowedError } from '@src/background/browser/views';
@@ -128,11 +129,13 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
         throw new Error(`Failed to invoke ${this.modelName} with structured output: \n${errorMessage}`);
       }
 
-      // Use type assertion to access the properties
+      // Use type assertion to access the properties.
+      // The JSON schema (and therefore the LLM's tool_calls.args) uses snake_case
+      // property names matching the Zod schema — current_state, not currentState.
       const rawResponse = response.raw as BaseMessage & {
         tool_calls?: Array<{
           args: {
-            currentState: typeof agentBrainSchema._type;
+            current_state: typeof agentBrainSchema._type;
             action: z.infer<ReturnType<typeof buildDynamicActionSchema>>;
           };
         }>;
@@ -144,7 +147,7 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
         // only use the first tool call
         const toolCall = rawResponse.tool_calls[0];
         return {
-          current_state: toolCall.args.currentState,
+          current_state: toolCall.args.current_state,
           action: [...toolCall.args.action],
         };
       }
@@ -169,9 +172,14 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
       this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.STEP_START, 'Navigating...');
 
       const messageManager = this.context.messageManager;
-      // add the browser state message
+      // Build DOM state ONCE for this step. The page-level cache is now warm and will be
+      // reused by buildBrowserStateUserMessage (via getCachedState) and doMultiAction's
+      // initial state read — avoiding 1-2 redundant full DOM traversals per step.
+      const currentState = await this.context.browserContext.getState(this.context.options.useVision);
+      // add the browser state message (will reuse the cache primed above)
       await this.addStateMessageToMemory();
-      const currentState = await this.context.browserContext.getCachedState();
+      // Enforce token budget by trimming the last state message if total tokens exceed maxInputTokens.
+      messageManager.cutMessages();
       browserStateHistory = new BrowserStateHistory(currentState);
 
       // check if the task is paused or stopped
@@ -200,8 +208,8 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
       this.removeLastStateMessageFromMemory();
       this.addModelOutputToMemory(modelOutput);
 
-      // take the actions
-      actionResults = await this.doMultiAction(actions);
+      // take the actions (pass in the already-built state to avoid a redundant DOM traversal)
+      actionResults = await this.doMultiAction(actions, currentState);
       // logger.info('Action results', JSON.stringify(actionResults, null, 2));
 
       this.context.actionResults = actionResults;
@@ -239,7 +247,12 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
 
       const errorString = `Navigation failed: ${errorMessage}`;
       logger.error(errorString);
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.STEP_FAIL, errorString);
+      // Sanitize before emitting to chat so the user never sees raw Puppeteer/CDP frames.
+      this.context.emitEvent(
+        Actors.NAVIGATOR,
+        ExecutionState.STEP_FAIL,
+        sanitizeErrorForChat('Navigation failed', errorMessage),
+      );
       agentOutput.error = errorMessage;
       return agentOutput;
     } finally {
@@ -363,13 +376,17 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
     return actions;
   }
 
-  private async doMultiAction(actions: Record<string, unknown>[]): Promise<ActionResult[]> {
+  private async doMultiAction(
+    actions: Record<string, unknown>[],
+    initialState?: BrowserState,
+  ): Promise<ActionResult[]> {
     const results: ActionResult[] = [];
     let errCount = 0;
     logger.info('Actions', actions);
 
     const browserContext = this.context.browserContext;
-    const browserState = await browserContext.getState(this.context.options.useVision);
+    // Reuse the state captured by the caller when available; otherwise build it now.
+    const browserState = initialState ?? (await browserContext.getState(this.context.options.useVision));
     const cachedPathHashes = await calcBranchPathHashSet(browserState);
 
     await browserContext.removeHighlight();
@@ -385,7 +402,7 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
 
         const actionInstance = this.actionRegistry.getAction(actionName);
         if (actionInstance === undefined) {
-          throw new Error(`Action ${actionName} not exists`);
+          throw new Error(`Action ${actionName} does not exist`);
         }
 
         const indexArg = actionInstance.getIndexArg(actionArgs);
@@ -427,8 +444,7 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
         if (this.context.paused || this.context.stopped) {
           return results;
         }
-        // TODO: wait for 1 second for now, need to optimize this to avoid unnecessary waiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Page load gating happens inside getState/waitForPageAndFramesLoad on the next step.
       } catch (error) {
         if (error instanceof URLNotAllowedError) {
           throw error;
@@ -440,10 +456,16 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
           JSON.stringify(actionArgs, null, 2),
           JSON.stringify(errorMessage, null, 2),
         );
-        // unexpected error, emit event
-        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMessage);
+        // Sanitize the message for the chat. The LLM still receives the full errorMessage
+        // via actionResults below so it can adapt; we only want to keep low-signal
+        // Puppeteer internals out of the user-facing log.
+        const chatMessage = sanitizeErrorForChat(actionName, errorMessage);
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, chatMessage);
         errCount++;
         if (errCount > 3) {
+          // Bump consecutiveFailures so the executor's maxFailures gate accounts for
+          // this aborted multi-action step (previously this throw bypassed the counter).
+          this.context.consecutiveFailures++;
           throw new Error('Too many errors in actions');
         }
         results.push(
@@ -541,7 +563,8 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
 
     // Filter out null values and cast to the expected type
     const validActions = updatedActions.filter((action): action is Record<string, unknown> => action !== null);
-    const result = await this.doMultiAction(validActions);
+    // Reuse the state we already fetched for index-updating to avoid a second DOM traversal.
+    const result = await this.doMultiAction(validActions, state);
 
     // Wait for the specified delay
     await new Promise(resolve => setTimeout(resolve, delay));
