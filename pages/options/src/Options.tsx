@@ -38,7 +38,7 @@ const Options = () => {
 
   const handleTabClick = (tabId: TabTypes) => {
     if (tabId === 'help') {
-      window.open('https://github.com/nanobrowser/nanobrowser', '_blank');
+      window.open('https://github.com/Kali2007thecodemaster/dot-browser', '_blank');
     } else {
       setActiveTab(tabId);
     }
