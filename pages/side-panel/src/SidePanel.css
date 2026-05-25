@@ -73,3 +73,115 @@ code {
 .scrollbar-gutter-stable::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
 }
+
+/* ---- Side navigation drawer ---- */
+
+.sidenav-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 49;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.sidenav-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidenav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 240px;
+  max-width: 80%;
+  background: var(--surface);
+  backdrop-filter: blur(20px) saturate(140%);
+  border-right: 1px solid var(--line);
+  z-index: 50;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  display: flex;
+  flex-direction: column;
+}
+.sidenav.open {
+  transform: translateX(0);
+}
+
+.sidenav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sidenav-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.sidenav-close:hover {
+  color: var(--text);
+  background: var(--glass);
+}
+
+.sidenav-items {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.sidenav-footer {
+  border-top: 1px solid var(--line);
+  padding: 8px;
+}
+
+.sidenav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: 'Manrope', sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.sidenav-item:hover:not(:disabled) {
+  background: var(--glass);
+  color: var(--accent);
+}
+.sidenav-item:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.sidenav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+.sidenav-item:hover:not(:disabled) .sidenav-icon {
+  color: var(--accent);
+}

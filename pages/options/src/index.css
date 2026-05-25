@@ -5,7 +5,7 @@
 :root {
   --bg: #ebebeb;
   --text: #1a1a1a;
-  --accent: #c45a2d;
+  --accent: #a78bfa;
   --glass: rgba(255, 255, 255, 0.5);
   --glass-border: rgba(255, 255, 255, 0.75);
   --line: rgba(0, 0, 0, 0.09);
@@ -17,7 +17,7 @@
   :root {
     --bg: #0c0c0c;
     --text: #e8e6e1;
-    --accent: #d4714a;
+    --accent: #c4b5fd;
     --glass: rgba(24, 24, 22, 0.6);
     --glass-border: rgba(255, 255, 255, 0.05);
     --line: rgba(255, 255, 255, 0.07);

@@ -6,18 +6,20 @@ interface LiveStatusBarProps {
 }
 
 const LiveStatusBar = memo(({ actor, text }: LiveStatusBarProps) => (
-  <div className="flex items-center gap-2 px-1 py-2" style={{ minWidth: 0 }}>
+  <div className="flex items-center gap-2.5 px-2 py-2" style={{ minWidth: 0 }}>
     <div className="flex shrink-0 items-center gap-[3px]">
       <span className="status-dot" />
       <span className="status-dot" />
       <span className="status-dot" />
     </div>
-    <span className="label-mono shrink-0" style={{ color: 'var(--accent)' }}>
+    <span className="label-mono shrink-0" style={{ color: 'var(--accent)', fontSize: 10 }}>
       {actor}
     </span>
     <span
       style={{
-        fontSize: 11,
+        fontFamily: 'Manrope, sans-serif',
+        fontSize: 13,
+        lineHeight: 1.4,
         color: 'var(--muted)',
         overflow: 'hidden',
         whiteSpace: 'nowrap',

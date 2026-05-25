@@ -5,7 +5,7 @@
 :root {
   --bg: #ebebeb;
   --text: #1a1a1a;
-  --accent: #c45a2d;
+  --accent: #a78bfa;
   --glass: rgba(255, 255, 255, 0.5);
   --glass-border: rgba(255, 255, 255, 0.75);
   --line: rgba(0, 0, 0, 0.09);
@@ -16,7 +16,7 @@
 [data-theme='dark'] {
   --bg: #0c0c0c;
   --text: #e8e6e1;
-  --accent: #d4714a;
+  --accent: #c4b5fd;
   --glass: rgba(24, 24, 22, 0.6);
   --glass-border: rgba(255, 255, 255, 0.05);
   --line: rgba(255, 255, 255, 0.07);
@@ -48,7 +48,7 @@ body {
     background: var(--glass);
     backdrop-filter: blur(16px);
     border: 1px solid var(--line);
-    border-radius: 4px;
+    border-radius: 10px;
     transition: border-color 0.2s linear;
   }
 
@@ -56,12 +56,180 @@ body {
     border-color: var(--accent);
   }
 
+  /* Small uppercase labels. Now Manrope (was monospace) so the whole UI shares one font. */
   .label-mono {
-    font-family: monospace;
+    font-family: 'Manrope', sans-serif;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 9px;
     line-height: 1;
+  }
+
+  /* ---- Modern chat surfaces (additive — palette and glass unchanged) ---- */
+
+  /* Readable in-chat body text. Sans-serif, generous line-height. */
+  .body-md {
+    font-family: 'Manrope', sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  /* Soft sans-serif actor header above an agent bubble. Replaces label-mono uses
+     inside the chat thread (kept available elsewhere for system pills). */
+  .actor-label {
+    font-family: 'Manrope', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--accent);
+  }
+
+  /* Agent response: no bubble. Plain text on the page background.
+     The class is kept (used by the progress loader) but has no visual styling. */
+  .chat-bubble {
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
+  /* User bubble: solid inverse, right-tail. */
+  .chat-bubble-user {
+    background: var(--text);
+    color: var(--bg);
+    border-radius: 12px;
+    border-bottom-right-radius: 4px;
+    padding: 12px 14px;
+  }
+
+  /* In-thread system status — soft pill with a small accent dot. */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    font-family: 'Manrope', sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--muted);
+    max-width: 100%;
+  }
+
+  .status-pill::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  /* Icon-button (send / mic / replay) — modern 36px square with 10px radius. */
+  .btn-icon-md {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  }
+
+  /* Agent response: plain text on the page background.
+     Color follows --text so it's black on light, white on dark.
+     No bubbles, no code-block styling, no colored links — just readable text. */
+  .md-content {
+    color: var(--text);
+    font-family: 'Manrope', sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  .md-content > * + * {
+    margin-top: 10px;
+  }
+  .md-paragraph {
+    margin: 0;
+  }
+  .md-list {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .md-list li {
+    margin: 2px 0;
+  }
+  /* Links: same color as body text, just underlined so they're identifiable. */
+  .md-link {
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  /* Message action toolbar — copy / retry / edit under each message. */
+  .msg-actions {
+    display: flex;
+    gap: 2px;
+    margin-top: 6px;
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+  }
+  .msg-actions-end {
+    justify-content: flex-end;
+  }
+  .msg-actions:hover {
+    opacity: 1;
+  }
+  .msg-action {
+    background: none;
+    border: none;
+    padding: 4px 6px;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  }
+  .msg-action:hover:not(:disabled) {
+    background: var(--glass);
+    color: var(--text);
+  }
+  .msg-action:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  /* Theme toggle — sun + moon SVGs stacked, cross-fade + rotate on toggle. */
+  .theme-toggle {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .theme-toggle:hover {
+    background: var(--glass);
+    color: var(--accent);
+  }
+  .theme-toggle-icon {
+    position: absolute;
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.6);
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .theme-toggle-icon.is-active {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
   }
 }
 

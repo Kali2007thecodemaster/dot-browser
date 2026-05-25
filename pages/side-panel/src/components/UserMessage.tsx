@@ -1,31 +1,35 @@
 import { memo } from 'react';
 import type { Message } from '@extension/storage';
 import { formatTimestamp } from '../utils';
+import MessageActions from './MessageActions';
 
 interface UserMessageProps {
   message: Message;
+  /** Pre-fills the chat input with this message's content for the user to edit. */
+  onEdit?: () => void;
+  /** Disable edit while the agent is running. */
+  actionsDisabled?: boolean;
 }
 
-const UserMessage = memo(({ message }: UserMessageProps) => {
+const UserMessage = memo(({ message, onEdit, actionsDisabled = false }: UserMessageProps) => {
   return (
-    <div className="flex justify-end">
-      <div style={{ maxWidth: '80%' }}>
+    <div className="flex flex-col items-end">
+      <div style={{ maxWidth: '82%' }}>
         <div
-          className="px-3 py-2"
+          className="chat-bubble-user"
           style={{
-            background: 'var(--text)',
-            color: 'var(--bg)',
-            borderRadius: '4px 4px 2px 4px',
-            fontSize: 13,
-            lineHeight: 1.5,
+            fontFamily: 'Manrope, sans-serif',
+            fontSize: 15,
+            lineHeight: 1.6,
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
           }}>
           {message.content}
         </div>
-        <div className="label-mono mt-0.5 text-right" style={{ color: 'var(--muted)' }}>
+        <div className="label-mono mt-1 text-right" style={{ color: 'var(--muted)', fontSize: 10 }}>
           {formatTimestamp(message.timestamp)}
         </div>
+        <MessageActions content={message.content} onEdit={onEdit} disabled={actionsDisabled} alignRight />
       </div>
     </div>
   );

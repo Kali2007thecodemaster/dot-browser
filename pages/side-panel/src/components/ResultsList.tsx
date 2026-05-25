@@ -176,7 +176,7 @@ function buildDiff(a: SavedResult, b: SavedResult): React.ReactNode {
   }
 
   return (
-    <div style={{ fontFamily: 'monospace', fontSize: 10 }}>
+    <div style={{ fontFamily: 'Manrope, sans-serif', fontSize: 11 }}>
       <div className="label-mono" style={{ color: 'var(--muted)', marginBottom: 6 }}>
         {totalChanges} changed lines
       </div>

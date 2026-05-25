@@ -158,7 +158,7 @@ export default function ChatInput({
         className="glass-input"
         style={isDragOver ? { borderColor: 'var(--accent)' } : undefined}
         aria-label={t('chat_input_form')}>
-        <div className="flex items-end gap-1 p-2">
+        <div className="flex items-end gap-2 p-2.5">
           {/* Attach button (FileUpload renders the 📎 button + hidden input) */}
           <FileUpload ref={fileUploadRef} onFileAdded={handleFileAdded} onError={handleFileError} disabled={disabled} />
 
@@ -173,10 +173,11 @@ export default function ChatInput({
             rows={1}
             className="min-w-0 flex-1 resize-none border-none bg-transparent focus:outline-none"
             style={{
-              fontSize: 13,
-              lineHeight: 1.5,
+              fontFamily: 'Manrope, sans-serif',
+              fontSize: 14,
+              lineHeight: 1.55,
               color: 'var(--text)',
-              padding: '4px 0',
+              padding: '7px 4px',
               opacity: disabled ? 0.5 : 1,
               cursor: disabled ? 'not-allowed' : 'text',
             }}
@@ -197,25 +198,18 @@ export default function ChatInput({
                     ? t('chat_stt_recording_stop')
                     : t('chat_stt_input_start')
               }
+              className="btn-icon-md"
               style={{
-                width: 32,
-                height: 32,
                 border: `1px solid ${isRecording ? 'var(--accent)' : 'var(--line)'}`,
-                borderRadius: 4,
                 background: isRecording ? 'var(--accent)' : 'transparent',
                 cursor: disabled || isProcessingSpeech ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                transition: 'border-color 0.2s linear',
                 opacity: disabled || isProcessingSpeech ? 0.4 : 1,
                 color: isRecording ? 'var(--bg)' : 'var(--muted)',
               }}>
               {isProcessingSpeech ? (
-                <AiOutlineLoading3Quarters className="size-3 animate-spin" />
+                <AiOutlineLoading3Quarters className="size-3.5 animate-spin" />
               ) : (
-                <FaMicrophone className="size-3" />
+                <FaMicrophone className="size-3.5" />
               )}
             </button>
           )}
@@ -225,21 +219,13 @@ export default function ChatInput({
             <button
               type="button"
               onClick={onStopTask}
+              className="btn-icon-md"
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 4,
-                border: 'none',
                 background: 'var(--accent)',
                 color: 'var(--bg)',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                fontSize: 10,
-              }}
-              className="label-mono">
+                fontSize: 12,
+              }}>
               ■
             </button>
           ) : historicalSessionId ? (
@@ -247,20 +233,13 @@ export default function ChatInput({
               type="button"
               onClick={handleReplay}
               disabled={!historicalSessionId}
+              className="btn-icon-md"
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 4,
-                border: 'none',
                 background: 'var(--accent)',
                 color: 'var(--bg)',
                 cursor: historicalSessionId ? 'pointer' : 'not-allowed',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
                 opacity: historicalSessionId ? 1 : 0.4,
-                fontSize: 14,
+                fontSize: 16,
               }}>
               ↺
             </button>
@@ -269,20 +248,12 @@ export default function ChatInput({
               type="submit"
               disabled={isSendButtonDisabled}
               aria-disabled={isSendButtonDisabled}
+              className="btn-icon-md"
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 4,
-                border: 'none',
                 background: isSendButtonDisabled ? 'var(--muted)' : 'var(--accent)',
                 color: 'var(--bg)',
                 cursor: isSendButtonDisabled ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                transition: 'background 0.2s linear',
-                fontSize: 16,
+                fontSize: 18,
               }}>
               →
             </button>

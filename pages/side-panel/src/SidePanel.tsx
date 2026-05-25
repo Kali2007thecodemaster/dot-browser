@@ -1,16 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FiSettings, FiDatabase, FiFileText, FiBell, FiClock } from 'react-icons/fi';
-import { PiPlusBold } from 'react-icons/pi';
-import { GrHistory } from 'react-icons/gr';
+import { FiMenu } from 'react-icons/fi';
 import { type Message, Actors, chatHistoryStore, agentModelStore, generalSettingsStore } from '@extension/storage';
 import { t } from '@extension/i18n';
 import MessageList from './components/MessageList';
 import LiveStatusBar from './components/LiveStatusBar';
 import ChatInput from './components/ChatInput';
 import ChatHistoryList from './components/ChatHistoryList';
-import BootScreen from './components/BootScreen';
 import TopBar from './components/TopBar';
+import SideNav from './components/SideNav';
 import WorkflowPicker from './components/WorkflowPicker';
 import ResultsList from './components/ResultsList';
 import WatchList from './components/WatchList';
@@ -52,11 +50,14 @@ const SidePanel = () => {
   const [showStopButton, setShowStopButton] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [isNavOpen, setIsNavOpen] = useState(false);
   const [chatSessions, setChatSessions] = useState<Array<{ id: string; title: string; createdAt: number }>>([]);
   const [isFollowUpMode, setIsFollowUpMode] = useState(false);
   const [isHistoricalSession, setIsHistoricalSession] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isBooted, setIsBooted] = useState(false);
+  // Boot screen removed — the side panel opens straight into chat. setup_executor
+  // fires once on mount (see effect below) so the background service worker spins up
+  // the agent runtime (was previously triggered by the manual INITIALIZE button).
   const [showResults, setShowResults] = useState(false);
   const [showWatches, setShowWatches] = useState(false);
   const [showSchedules, setShowSchedules] = useState(false);
@@ -121,14 +122,26 @@ const SidePanel = () => {
     loadGeneralSettings();
   }, [checkModelConfiguration, loadGeneralSettings]);
 
-  // Context menu pre-fill: check for selected text passed from the context menu action
+  // Context menu pre-fill: check for a payload passed from a context-menu action.
+  // Two shapes are supported:
+  //   { text, pageUrl } — selection-based "Ask Dot about [selection]" entry; we quote
+  //     it so the user can frame their question.
+  //   { task, pageUrl } — fully-formed task from the "download this link" /
+  //     "summarize this page" / "fill this form" entries; we drop it straight into
+  //     the input box. The user still has to hit send, so they keep control.
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
         const result = await chrome.storage.session.get('dotContextMenuPending');
-        const pending = result.dotContextMenuPending as { text: string; pageUrl: string } | undefined;
-        if (pending?.text && setInputTextRef.current) {
-          const prefill = `"${pending.text.slice(0, 300)}"${pending.pageUrl ? `\n(from ${pending.pageUrl})` : ''}`;
+        const pending = result.dotContextMenuPending as { text?: string; task?: string; pageUrl?: string } | undefined;
+        if (!pending || !setInputTextRef.current) return;
+        let prefill = '';
+        if (pending.task) {
+          prefill = pending.task;
+        } else if (pending.text) {
+          prefill = `"${pending.text.slice(0, 300)}"${pending.pageUrl ? `\n(from ${pending.pageUrl})` : ''}`;
+        }
+        if (prefill) {
           setInputTextRef.current(prefill);
           await chrome.storage.session.remove('dotContextMenuPending');
         }
@@ -231,9 +244,19 @@ const SidePanel = () => {
                 setInputEnabled(true);
                 setShowStopButton(false);
                 setIsReplaying(false);
-                // Show the agent's completion message (finalAnswer), but not the UUID fallback
+                // Show the agent's completion message (finalAnswer), but not the UUID fallback.
+                // Render it as a regular agent message (via AgentMessage → MarkdownText) — not as
+                // a SYSTEM status pill — so it appears as proper chat text with paragraphs / bullets.
                 const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(content ?? '');
-                if (content && !isUUID) skip = false;
+                if (content && !isUUID) {
+                  appendMessage({
+                    actor: Actors.PLANNER,
+                    content,
+                    timestamp,
+                  });
+                  // Skip the default SYSTEM append below so we don't double-render.
+                  skip = true;
+                }
               }
               break;
             }
@@ -375,9 +398,9 @@ const SidePanel = () => {
     [appendMessage],
   );
 
-  const handleBoot = useCallback(() => {
+  // Auto-run the previous handleBoot logic on mount.
+  useEffect(() => {
     chrome.runtime.sendMessage({ type: 'setup_executor' }).catch(() => {});
-    setIsBooted(true);
   }, []);
 
   // Stop heartbeat and close connection
@@ -1082,25 +1105,13 @@ const SidePanel = () => {
         fontFamily: 'Manrope, sans-serif',
         position: 'relative',
       }}>
-      {/* Boot screen — fades out after boot */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          zIndex: 10,
-          opacity: isBooted ? 0 : 1,
-          transition: 'opacity 0.3s',
-          pointerEvents: isBooted ? 'none' : 'auto',
-        }}>
-        <BootScreen onBoot={handleBoot} />
-      </div>
-
-      {/* Chat shell — fades in after boot */}
-      <div className="flex h-full flex-col" style={{ opacity: isBooted ? 1 : 0, transition: 'opacity 0.3s' }}>
+      {/* Chat shell — straight into chat, no boot screen */}
+      <div className="flex h-full flex-col">
         <TopBar
           isDarkMode={isDarkMode}
           onToggleDark={() => setIsDarkMode(prev => !prev)}
           isAgentActive={showStopButton}
+          onLogoClick={handleNewChat}
         />
         <header className="header relative">
           <div className="header-logo">
@@ -1113,83 +1124,33 @@ const SidePanel = () => {
                 {t('nav_back')}
               </button>
             ) : (
-              <div className="dot-logo" style={{ width: 10, height: 10 }} />
+              <button
+                type="button"
+                onClick={() => setIsNavOpen(true)}
+                className="header-icon cursor-pointer"
+                aria-label="Open menu"
+                title="Open menu"
+                tabIndex={0}>
+                <FiMenu size={20} />
+              </button>
             )}
           </div>
           <div className="header-icons">
-            {!showHistory && !showResults && !showWatches && !showSchedules && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleNewChat}
-                  onKeyDown={e => e.key === 'Enter' && handleNewChat()}
-                  className="header-icon cursor-pointer"
-                  aria-label={t('nav_newChat_a11y')}
-                  tabIndex={0}>
-                  <PiPlusBold size={20} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLoadHistory}
-                  onKeyDown={e => e.key === 'Enter' && handleLoadHistory()}
-                  className="header-icon cursor-pointer"
-                  aria-label={t('nav_loadHistory_a11y')}
-                  tabIndex={0}>
-                  <GrHistory size={20} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenResults}
-                  onKeyDown={e => e.key === 'Enter' && handleOpenResults()}
-                  className="header-icon cursor-pointer"
-                  aria-label="Saved results"
-                  tabIndex={0}>
-                  <FiDatabase size={18} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenWatches}
-                  onKeyDown={e => e.key === 'Enter' && handleOpenWatches()}
-                  className="header-icon cursor-pointer"
-                  aria-label="Web watches"
-                  title="Web watches"
-                  tabIndex={0}>
-                  <FiBell size={17} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenSchedules}
-                  onKeyDown={e => e.key === 'Enter' && handleOpenSchedules()}
-                  className="header-icon cursor-pointer"
-                  aria-label="Scheduled tasks"
-                  title="Scheduled tasks"
-                  tabIndex={0}>
-                  <FiClock size={17} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleMarkdownSnapshot}
-                  onKeyDown={e => e.key === 'Enter' && handleMarkdownSnapshot()}
-                  className="header-icon cursor-pointer"
-                  aria-label="Snapshot page as markdown"
-                  title="Snapshot page as markdown"
-                  tabIndex={0}
-                  style={{ opacity: inputEnabled && !isHistoricalSession ? 1 : 0.35 }}>
-                  <FiFileText size={18} />
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={() => chrome.runtime.openOptionsPage()}
-              onKeyDown={e => e.key === 'Enter' && chrome.runtime.openOptionsPage()}
-              className="header-icon cursor-pointer"
-              aria-label={t('nav_settings_a11y')}
-              tabIndex={0}>
-              <FiSettings size={20} />
-            </button>
+            <div className="dot-logo" style={{ width: 8, height: 8 }} />
           </div>
         </header>
+        <SideNav
+          isOpen={isNavOpen}
+          onClose={() => setIsNavOpen(false)}
+          onNewChat={handleNewChat}
+          onLoadHistory={handleLoadHistory}
+          onOpenResults={handleOpenResults}
+          onOpenWatches={handleOpenWatches}
+          onOpenSchedules={handleOpenSchedules}
+          onMarkdownSnapshot={handleMarkdownSnapshot}
+          onOpenSettings={() => chrome.runtime.openOptionsPage()}
+          snapshotEnabled={inputEnabled && !isHistoricalSession}
+        />
         {showWatches ? (
           <div className="flex-1 overflow-hidden">
             <WatchList onClose={() => setShowWatches(false)} />
@@ -1291,7 +1252,19 @@ const SidePanel = () => {
                 )}
                 {messages.length > 0 && (
                   <div className="scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth p-3">
-                    <MessageList messages={messages} isDarkMode={isDarkMode} />
+                    <MessageList
+                      messages={messages}
+                      isDarkMode={isDarkMode}
+                      onRetry={userContent => {
+                        if (!inputEnabled || isHistoricalSession) return;
+                        handleSendMessage(userContent);
+                      }}
+                      onEdit={userContent => {
+                        if (isHistoricalSession) return;
+                        setInputTextRef.current?.(userContent);
+                      }}
+                      actionsDisabled={!inputEnabled || isHistoricalSession}
+                    />
                     {liveStatus && <LiveStatusBar actor={liveStatus.actor} text={liveStatus.text} />}
                     <div ref={messagesEndRef} />
                   </div>

@@ -7,16 +7,10 @@ interface StatusRowProps {
 
 const StatusRow = memo(({ message }: StatusRowProps) => {
   return (
-    <div
-      className="label-mono px-3 py-2"
-      style={{
-        borderLeft: '2px solid var(--accent)',
-        background: 'transparent',
-        color: 'var(--muted)',
-        fontSize: 10,
-        lineHeight: 1.6,
-      }}>
-      {message.content}
+    <div className="flex justify-center px-2">
+      <div className="status-pill" style={{ wordBreak: 'break-word' }}>
+        <span>{message.content}</span>
+      </div>
     </div>
   );
 });
