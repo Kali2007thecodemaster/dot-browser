@@ -32,19 +32,8 @@ import {
   fetchUrlActionSchema,
   downloadFileActionSchema,
   generateMdBriefActionSchema,
-  notionSearchActionSchema,
-  notionGetPinnedDbActionSchema,
-  notionGetDatabaseActionSchema,
-  notionQueryDatabaseActionSchema,
-  notionGetPageActionSchema,
-  notionCreateDatabaseActionSchema,
-  notionCreatePageActionSchema,
-  notionUpdatePageActionSchema,
-  notionArchivePageActionSchema,
-  notionArchiveDatabaseActionSchema,
 } from './schemas';
-import { notionStore, profileStore, resultsStore, uploadStore } from '@extension/storage';
-import { notionClient, extractNotionTitle, flattenPageProperties } from '@src/background/services/notion';
+import { profileStore, resultsStore, uploadStore } from '@extension/storage';
 import { getWorkflow } from '../../workflows';
 import { z } from 'zod';
 import { createLogger } from '@src/background/log';
@@ -606,168 +595,6 @@ export class ActionBuilder {
     }, generateMdBriefActionSchema);
     actions.push(generateMdBrief);
 
-    // ----- Notion actions (Phase 2) -----
-
-    const notionSearch = new Action(async (input: z.infer<typeof notionSearchActionSchema.schema>) => {
-      const intent = input.intent || `Searching Notion${input.query ? ` for "${input.query}"` : ''}`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const res = await notionClient.search({
-        query: input.query,
-        filterType: input.filter_type,
-        pageSize: input.page_size,
-      });
-      const rows = res.results.map(r => ({
-        id: r.id,
-        type: r.object,
-        title: extractNotionTitle(r),
-        url: r.url ?? '',
-      }));
-      const msg = `Found ${rows.length} Notion item(s)`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ rows, has_more: res.has_more }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionSearchActionSchema);
-    actions.push(notionSearch);
-
-    const notionGetPinnedDb = new Action(async (input: z.infer<typeof notionGetPinnedDbActionSchema.schema>) => {
-      const intent = input.intent || `Looking up pinned db "${input.name}"`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const entry = await notionStore.getPinned(input.name);
-      if (!entry) {
-        const all = (await notionStore.getConfig()).pinnedDatabases.map(d => d.name);
-        throw new Error(
-          `No pinned database named "${input.name}". Available pins: ${all.length ? all.join(', ') : '(none)'}. The user can add pins in Settings → Notion.`,
-        );
-      }
-      const msg = `Resolved "${input.name}" → ${entry.databaseId}`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify(
-          { database_id: entry.databaseId, description: entry.description ?? '' },
-          null,
-          2,
-        ),
-        includeInMemory: true,
-      });
-    }, notionGetPinnedDbActionSchema);
-    actions.push(notionGetPinnedDb);
-
-    const notionGetDatabase = new Action(async (input: z.infer<typeof notionGetDatabaseActionSchema.schema>) => {
-      const intent = input.intent || 'Reading Notion database schema';
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const db = await notionClient.getDatabase(input.database_id);
-      // Flatten schema to { name: type } so the LLM doesn't have to wade through Notion's verbose format.
-      const properties: Record<string, string> = {};
-      for (const [name, p] of Object.entries(db.properties)) properties[name] = p.type;
-      const title = Array.isArray(db.title) ? db.title.map(t => t.plain_text).join('') : '';
-      const msg = `Read schema: ${title || '(untitled)'} (${Object.keys(properties).length} fields)`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ id: db.id, title, url: db.url, properties }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionGetDatabaseActionSchema);
-    actions.push(notionGetDatabase);
-
-    const notionQueryDatabase = new Action(async (input: z.infer<typeof notionQueryDatabaseActionSchema.schema>) => {
-      const intent = input.intent || 'Querying Notion database';
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const res = await notionClient.queryDatabase(input.database_id, {
-        filter: input.filter,
-        sorts: input.sorts,
-        pageSize: input.page_size,
-      });
-      const rows = res.results.map(flattenPageProperties);
-      const msg = `Returned ${rows.length} row(s)`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ rows, has_more: res.has_more, next_cursor: res.next_cursor }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionQueryDatabaseActionSchema);
-    actions.push(notionQueryDatabase);
-
-    const notionGetPage = new Action(async (input: z.infer<typeof notionGetPageActionSchema.schema>) => {
-      const intent = input.intent || 'Reading Notion page';
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const page = await notionClient.getPage(input.page_id);
-      const flat = flattenPageProperties(page);
-      const msg = `Read page ${page.id}`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({ extractedContent: JSON.stringify(flat, null, 2), includeInMemory: true });
-    }, notionGetPageActionSchema);
-    actions.push(notionGetPage);
-
-    const notionCreateDatabase = new Action(async (input: z.infer<typeof notionCreateDatabaseActionSchema.schema>) => {
-      const intent = input.intent || `Creating Notion database "${input.title}"`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const db = await notionClient.createDatabase(input.parent_page_id, input.title, input.schema);
-      const msg = `Created database "${input.title}" (${db.id})`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ database_id: db.id, title: input.title, url: db.url }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionCreateDatabaseActionSchema);
-    actions.push(notionCreateDatabase);
-
-    const notionCreatePage = new Action(async (input: z.infer<typeof notionCreatePageActionSchema.schema>) => {
-      const intent = input.intent || 'Creating Notion page';
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const page = await notionClient.createPage(input.database_id, input.values);
-      const msg = `Created row ${page.id}`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ page_id: page.id, url: page.url }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionCreatePageActionSchema);
-    actions.push(notionCreatePage);
-
-    const notionUpdatePage = new Action(async (input: z.infer<typeof notionUpdatePageActionSchema.schema>) => {
-      const intent = input.intent || 'Updating Notion page';
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const page = await notionClient.updatePage(input.page_id, input.database_id, input.values);
-      const msg = `Updated row ${page.id}`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ page_id: page.id, url: page.url }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionUpdatePageActionSchema);
-    actions.push(notionUpdatePage);
-
-    const notionArchivePage = new Action(async (input: z.infer<typeof notionArchivePageActionSchema.schema>) => {
-      const intent = input.intent || 'Archiving Notion page';
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-      const page = await notionClient.archivePage(input.page_id);
-      const msg = `Archived row ${page.id}`;
-      this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-      return new ActionResult({
-        extractedContent: JSON.stringify({ page_id: page.id, archived: true }, null, 2),
-        includeInMemory: true,
-      });
-    }, notionArchivePageActionSchema);
-    actions.push(notionArchivePage);
-
-    const notionArchiveDatabase = new Action(
-      async (input: z.infer<typeof notionArchiveDatabaseActionSchema.schema>) => {
-        const intent = input.intent || 'Archiving Notion database';
-        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
-        const db = await notionClient.archiveDatabase(input.database_id);
-        const msg = `Archived database ${db.id}`;
-        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-        return new ActionResult({
-          extractedContent: JSON.stringify({ database_id: db.id, archived: true }, null, 2),
-          includeInMemory: true,
-        });
-      },
-      notionArchiveDatabaseActionSchema,
-    );
-    actions.push(notionArchiveDatabase);
-
     // Content Actions
     // TODO: this is not used currently, need to improve on input size
     // const extractContent = new Action(async (input: z.infer<typeof extractContentActionSchema.schema>) => {
@@ -1242,22 +1069,24 @@ export class ActionBuilder {
       type FetchResult = { ok: boolean; status: number; text: string; error?: string };
       let result: FetchResult;
       try {
+        // chrome.scripting.executeScript's `args` array must be JSON-serializable.
+        // `undefined` is NOT valid JSON, so optional fields (`headers`, `body`) must
+        // be normalized to `null` (or a concrete value) before crossing the bridge.
+        // Without this, an LLM call that omits headers triggers:
+        //   "Error at index 2: Value is unserializable."
+        const safeHeaders: Record<string, string> | null = input.headers ?? null;
+        const safeBody: string | null = input.body ?? null;
         const injected = await chrome.scripting.executeScript<
-          [string, string, Record<string, string> | undefined, string | undefined],
+          [string, string, Record<string, string> | null, string | null],
           FetchResult
         >({
           target: { tabId },
-          func: (async (
-            url: string,
-            method: string,
-            headers: Record<string, string> | undefined,
-            body: string | undefined,
-          ) => {
+          func: (async (url: string, method: string, headers: Record<string, string> | null, body: string | null) => {
             try {
               const res = await fetch(url, {
                 method: method || 'GET',
                 credentials: 'include',
-                headers: { Accept: 'application/json', ...headers },
+                headers: { Accept: 'application/json', ...(headers ?? {}) },
                 body: body ?? undefined,
               });
               const text = await res.text();
@@ -1268,10 +1097,10 @@ export class ActionBuilder {
           }) as unknown as (
             url: string,
             method: string,
-            headers: Record<string, string> | undefined,
-            body: string | undefined,
+            headers: Record<string, string> | null,
+            body: string | null,
           ) => FetchResult,
-          args: [input.url, input.method ?? 'GET', input.headers, input.body],
+          args: [input.url, input.method ?? 'GET', safeHeaders, safeBody],
         });
         result = injected[0]?.result ?? { ok: false, status: 0, text: '', error: 'No result from script' };
       } catch (e) {

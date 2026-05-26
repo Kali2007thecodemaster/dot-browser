@@ -6,7 +6,6 @@ export * from './prompt/favorites';
 export * from './profileStore';
 export * from './resultsStore';
 export * from './uploadStore';
-export * from './notionStore';
 
 export * from './watchStore';
 export * from './scheduledTaskStore';

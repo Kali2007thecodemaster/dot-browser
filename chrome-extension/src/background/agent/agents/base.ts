@@ -231,7 +231,17 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
       const extractedJson = extractJsonFromModelOutput(cleanedContent);
       return this.validateModelOutput(extractedJson);
     } catch (error) {
-      logger.warning('manuallyParseResponse failed', error);
+      // High-signal diagnostic — log enough of the raw output to identify what shape the
+      // model returned. Helps catch cases where a provider emits an off-schema response
+      // (prose without JSON, malformed JSON, schema mismatch) so we can iterate on the
+      // extractor or the prompt instead of guessing.
+      const head = cleanedContent.slice(0, 600);
+      const tail = cleanedContent.length > 600 ? cleanedContent.slice(-200) : '';
+      logger.warning(
+        `manuallyParseResponse failed (${cleanedContent.length} chars). Error: ${
+          error instanceof Error ? error.message : String(error)
+        }\n--- raw head ---\n${head}${tail ? `\n--- raw tail ---\n${tail}` : ''}`,
+      );
       return undefined;
     }
   }

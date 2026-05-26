@@ -127,11 +127,63 @@ export function extractJsonFromModelOutput(content: string): Record<string, unkn
       }
     }
 
-    // Parse the cleaned content
-    return JSON.parse(processedContent);
+    // Try direct JSON.parse first.
+    try {
+      return JSON.parse(processedContent);
+    } catch {
+      /* fall through to balanced-brace extraction */
+    }
+
+    // Final fallback — find the FIRST balanced JSON object in the text.
+    // Catches "Sure, here's the answer: { ... }" / "<answer>{...}</answer>" /
+    // any other prose-wrapped output where the JSON itself is well-formed.
+    const block = extractFirstJsonObject(processedContent);
+    if (block) {
+      return JSON.parse(block);
+    }
+    throw new ResponseParseError('Could not manually extract JSON from model output');
   } catch (e) {
+    if (e instanceof ResponseParseError) throw e;
     throw new ResponseParseError(`Could not manually extract JSON from model output`);
   }
+}
+
+/**
+ * Walk a string and return the first balanced top-level JSON object as a substring,
+ * or null if none exists. String-aware (won't confuse braces inside quoted strings)
+ * and escape-aware (`"\\""` doesn't accidentally close a string).
+ */
+function extractFirstJsonObject(text: string): string | null {
+  let start = text.indexOf('{');
+  while (start !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) return text.slice(start, i + 1);
+      }
+    }
+    // Unclosed object starting at `start` — try the next `{`.
+    start = text.indexOf('{', start + 1);
+  }
+  return null;
 }
 
 /**
