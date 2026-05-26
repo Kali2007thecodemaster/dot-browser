@@ -111,7 +111,7 @@ Common action sequences:
 - Critical guidelines for extraction:
   • ***CACHE CURRENT FINDINGS BEFORE SCROLLING*** (otherwise they are lost from the viewport)
   • Avoid caching duplicate items — compare against memory before caching
-  • In memory, always include "Cached N of M target items. Last scroll status: <ok|already-at-bottom>."
+  • In memory, always include the running count, e.g. "Cached 7 of 13 target items so far."
   • Scroll EXACTLY ONE PAGE with next_page/previous_page action per step
   • NEVER use scroll_to_percent for extraction — it skips content
   • For SINGLE-FACT tasks, the 10-scroll soft cap from earlier guidance still applies; for AGGREGATION tasks the cap is 25 scrolls (then treat as infinite).

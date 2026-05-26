@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { AgentContext, AgentOutput } from '../types';
 import type { BasePrompt } from '../prompts/base';
-import type { BaseMessage } from '@langchain/core/messages';
+import { HumanMessage, type BaseMessage } from '@langchain/core/messages';
 import { createLogger } from '@src/background/log';
 import type { Action } from '../actions/builder';
 import { convertInputMessages, extractJsonFromModelOutput, removeThinkTags } from '../messages/utils';
@@ -132,57 +132,89 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
         name: this.modelOutputToolName,
       });
 
-      let response = undefined;
-      try {
-        logger.debug(`[${this.modelName}] Invoking LLM with structured output...`);
-        response = await structuredLlm.invoke(inputMessages, {
-          signal: this.context.controller.signal,
-          ...this.callOptions,
-        });
+      // One in-place retry on parse failure with a JSON-only hint. Avoids bumping the
+      // executor's consecutiveFailures counter for transient parse misses.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const messagesForAttempt =
+          attempt === 0
+            ? inputMessages
+            : [
+                ...inputMessages,
+                new HumanMessage(
+                  'Your previous response could not be parsed. Respond with VALID JSON ONLY that exactly matches the required schema. No preamble, no explanation, no markdown fences — emit only the JSON object via the structured-output tool call.',
+                ),
+              ];
 
-        logger.debug(`[${this.modelName}] LLM response received:`, {
-          hasParsed: !!response.parsed,
-          hasRaw: !!response.raw,
-          rawContent: response.raw?.content?.slice(0, 500) + (response.raw?.content?.length > 500 ? '...' : ''),
-        });
+        let response = undefined;
+        try {
+          logger.debug(`[${this.modelName}] Invoking LLM with structured output (attempt ${attempt + 1})...`);
+          response = await structuredLlm.invoke(messagesForAttempt, {
+            signal: this.context.controller.signal,
+            ...this.callOptions,
+          });
 
-        if (response.parsed) {
-          logger.debug(`[${this.modelName}] Successfully parsed structured output`);
-          return response.parsed;
-        }
+          logger.debug(`[${this.modelName}] LLM response received:`, {
+            hasParsed: !!response.parsed,
+            hasRaw: !!response.raw,
+            rawContent: response.raw?.content?.slice(0, 500) + (response.raw?.content?.length > 500 ? '...' : ''),
+          });
 
-        // No structured parse, but no exception either. Some providers (Ollama, certain
-        // OpenAI-compatible endpoints, some local models) return the JSON in the raw
-        // content instead of the parsed field. Try the manual extraction before giving up.
-        if (response.raw?.content && typeof response.raw.content === 'string') {
-          const manual = this.manuallyParseResponse(response.raw.content);
-          if (manual) {
-            logger.info(`[${this.modelName}] Recovered structured output via manual JSON extraction`);
-            return manual;
+          if (response.parsed) {
+            if (attempt > 0) logger.info(`[${this.modelName}] Recovered structured output via in-place reprompt`);
+            else logger.debug(`[${this.modelName}] Successfully parsed structured output`);
+            return response.parsed;
           }
-        }
 
-        logger.error('Failed to parse response', response);
-        throw new Error('Could not parse response with structured output');
-      } catch (error) {
-        if (isAbortedError(error)) {
-          throw error;
-        }
-
-        // Any parse-related exception: try the manual extractor against the raw text.
-        // Was previously gated on errorMessage.includes('is not valid JSON'); broadening
-        // it catches a wider set of provider error wordings.
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        if (response?.raw?.content && typeof response.raw.content === 'string') {
-          const parsed = this.manuallyParseResponse(response.raw.content);
-          if (parsed) {
-            logger.info(`[${this.modelName}] Recovered structured output via manual JSON extraction after exception`);
-            return parsed;
+          // No structured parse, but no exception either. Some providers (Ollama, certain
+          // OpenAI-compatible endpoints, some local models) return the JSON in the raw
+          // content instead of the parsed field. Try the manual extraction before giving up.
+          if (response.raw?.content && typeof response.raw.content === 'string') {
+            const manual = this.manuallyParseResponse(response.raw.content);
+            if (manual) {
+              logger.info(
+                `[${this.modelName}] Recovered structured output via manual JSON extraction (attempt ${attempt + 1})`,
+              );
+              return manual;
+            }
           }
+
+          // Parse failed silently — retry once with the JSON-only hint before giving up.
+          if (attempt === 0) {
+            logger.warning(
+              `[${this.modelName}] Structured output unparseable on first attempt, retrying with JSON-only hint`,
+            );
+            continue;
+          }
+          logger.error('Failed to parse response', response);
+          throw new Error('Could not parse response with structured output');
+        } catch (error) {
+          if (isAbortedError(error)) {
+            throw error;
+          }
+
+          // Any parse-related exception: try the manual extractor against the raw text.
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          if (response?.raw?.content && typeof response.raw.content === 'string') {
+            const parsed = this.manuallyParseResponse(response.raw.content);
+            if (parsed) {
+              logger.info(
+                `[${this.modelName}] Recovered structured output via manual JSON extraction after exception (attempt ${attempt + 1})`,
+              );
+              return parsed;
+            }
+          }
+          if (attempt === 0) {
+            logger.warning(
+              `[${this.modelName}] Structured output threw on attempt 1, retrying with JSON-only hint: ${errorMessage}`,
+            );
+            continue;
+          }
+          logger.error(`[${this.modelName}] LLM call failed with error: \n${errorMessage}`);
+          throw new Error(`Failed to invoke ${this.modelName} with structured output: \n${errorMessage}`);
         }
-        logger.error(`[${this.modelName}] LLM call failed with error: \n${errorMessage}`);
-        throw new Error(`Failed to invoke ${this.modelName} with structured output: \n${errorMessage}`);
       }
+      // Unreachable — loop either returns or throws — but TS needs an explicit exit.
+      throw new Error(`Failed to invoke ${this.modelName} with structured output: exhausted retries`);
     }
 
     // Fallback: Without structured output support, need to extract JSON from model output manually

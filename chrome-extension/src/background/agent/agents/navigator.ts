@@ -99,68 +99,99 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
         name: this.modelOutputToolName,
       });
 
-      let response = undefined;
-      try {
-        response = await structuredLlm.invoke(inputMessages, {
-          signal: this.context.controller.signal,
-          ...this.callOptions,
-        });
+      // One in-place retry on parse failure with an explicit "respond with valid JSON only" hint.
+      // This consumes one extra LLM call but avoids bumping the executor's consecutiveFailures
+      // counter for transient parse misses (truncated tool-call args, model emitted prose, etc.).
+      let lastErrorMessage = '';
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const messagesForAttempt =
+          attempt === 0
+            ? inputMessages
+            : [
+                ...inputMessages,
+                new HumanMessage(
+                  'Your previous response could not be parsed. Respond with VALID JSON ONLY that exactly matches the required schema. No preamble, no explanation, no markdown fences — emit only the JSON object via the structured-output tool call.',
+                ),
+              ];
 
-        if (response.parsed) {
-          return response.parsed;
-        }
+        let response = undefined;
+        try {
+          response = await structuredLlm.invoke(messagesForAttempt, {
+            signal: this.context.controller.signal,
+            ...this.callOptions,
+          });
 
-        // No structured parse, but no exception. Try manual extraction against the raw
-        // content before falling through to the tool_calls path — some providers stuff
-        // the JSON into the message body instead of into a tool call.
-        if (response.raw?.content && typeof response.raw.content === 'string') {
-          const manual = this.manuallyParseResponse(response.raw.content);
-          if (manual) {
-            logger.info('Recovered navigator output via manual JSON extraction');
-            return manual;
+          if (response.parsed) {
+            if (attempt > 0) logger.info('Navigator recovered via in-place reprompt');
+            return response.parsed;
           }
-        }
-      } catch (error) {
-        if (isAbortedError(error)) {
-          throw error;
-        }
 
-        // Any parse-related exception: try the manual extractor against the raw text.
-        // Broadened from `is not valid JSON` to "any error with raw content" so we
-        // recover from a wider set of provider error wordings (Ollama, custom OpenAI-
-        // compatible endpoints, etc.).
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        if (response?.raw?.content && typeof response.raw.content === 'string') {
-          const parsed = this.manuallyParseResponse(response.raw.content);
-          if (parsed) {
-            logger.info('Recovered navigator output via manual JSON extraction after exception');
-            return parsed;
+          // No structured parse, but no exception. Try manual extraction against the raw
+          // content — some providers stuff the JSON into the message body instead of into
+          // a tool call.
+          if (response.raw?.content && typeof response.raw.content === 'string') {
+            const manual = this.manuallyParseResponse(response.raw.content);
+            if (manual) {
+              logger.info(`Recovered navigator output via manual JSON extraction (attempt ${attempt + 1})`);
+              return manual;
+            }
           }
+        } catch (error) {
+          if (isAbortedError(error)) {
+            throw error;
+          }
+
+          // Any parse-related exception: try the manual extractor against the raw text.
+          lastErrorMessage = error instanceof Error ? error.message : String(error);
+          if (response?.raw?.content && typeof response.raw.content === 'string') {
+            const parsed = this.manuallyParseResponse(response.raw.content);
+            if (parsed) {
+              logger.info(
+                `Recovered navigator output via manual JSON extraction after exception (attempt ${attempt + 1})`,
+              );
+              return parsed;
+            }
+          }
+          // Don't throw yet — let the retry loop have another go unless we're on the last attempt.
+          if (attempt === 1) {
+            throw new Error(`Failed to invoke ${this.modelName} with structured output: \n${lastErrorMessage}`);
+          }
+          logger.warning(
+            `Navigator invoke threw on attempt ${attempt + 1}, retrying with JSON-only hint: ${lastErrorMessage}`,
+          );
+          continue;
         }
-        throw new Error(`Failed to invoke ${this.modelName} with structured output: \n${errorMessage}`);
-      }
 
-      // Use type assertion to access the properties.
-      // The JSON schema (and therefore the LLM's tool_calls.args) uses snake_case
-      // property names matching the Zod schema — current_state, not currentState.
-      const rawResponse = response.raw as BaseMessage & {
-        tool_calls?: Array<{
-          args: {
-            current_state: typeof agentBrainSchema._type;
-            action: z.infer<ReturnType<typeof buildDynamicActionSchema>>;
-          };
-        }>;
-      };
-
-      // sometimes LLM returns an empty content, but with one or more tool calls, so we need to check the tool calls
-      if (rawResponse.tool_calls && rawResponse.tool_calls.length > 0) {
-        logger.info('Navigator structuredLlm tool call with empty content', rawResponse.tool_calls);
-        // only use the first tool call
-        const toolCall = rawResponse.tool_calls[0];
-        return {
-          current_state: toolCall.args.current_state,
-          action: [...toolCall.args.action],
+        // Use type assertion to access the properties.
+        // The JSON schema (and therefore the LLM's tool_calls.args) uses snake_case
+        // property names matching the Zod schema — current_state, not currentState.
+        const rawResponse = response.raw as BaseMessage & {
+          tool_calls?: Array<{
+            args: {
+              current_state: typeof agentBrainSchema._type;
+              action: z.infer<ReturnType<typeof buildDynamicActionSchema>>;
+            };
+          }>;
         };
+
+        // sometimes LLM returns an empty content, but with one or more tool calls, so we need to check the tool calls
+        if (rawResponse.tool_calls && rawResponse.tool_calls.length > 0) {
+          if (attempt > 0) logger.info('Navigator recovered via in-place reprompt (tool_calls path)');
+          else logger.info('Navigator structuredLlm tool call with empty content', rawResponse.tool_calls);
+          // only use the first tool call
+          const toolCall = rawResponse.tool_calls[0];
+          return {
+            current_state: toolCall.args.current_state,
+            action: [...toolCall.args.action],
+          };
+        }
+
+        // No parsed, no manual recovery, no tool_calls — log and retry once more before giving up.
+        if (attempt === 0) {
+          logger.warning('Navigator response unparseable on first attempt, retrying with JSON-only hint');
+          continue;
+        }
+        throw new ResponseParseError('Could not parse navigator response');
       }
       throw new ResponseParseError('Could not parse navigator response');
     }
