@@ -560,13 +560,48 @@ export async function getScrollInfo(tabId: number): Promise<[number, number, num
   const results = await chrome.scripting.executeScript({
     target: { tabId: tabId },
     func: () => {
-      const scrollY = window.scrollY;
-      const visualViewportHeight = window.visualViewport?.height || window.innerHeight;
-      const scrollHeight = document.body.scrollHeight;
+      const winH = window.visualViewport?.height || window.innerHeight;
+      const docEl = document.scrollingElement || document.documentElement;
+      // Prefer document-level scroll when the document itself is scrollable. The +4 fudge
+      // covers SPAs that pad the body to ~exactly the viewport.
+      if (docEl && docEl.scrollHeight > winH + 4) {
+        return {
+          scrollY: window.scrollY,
+          visualViewportHeight: winH,
+          scrollHeight: docEl.scrollHeight,
+        };
+      }
+      // SPA pattern: the body fits the viewport but a child div owns the scroll. Find the
+      // largest scrollable descendant by visible-area × scroll-distance so we don't pick
+      // up tiny overflow:auto containers (e.g. tag chips, dropdowns).
+      let best: Element | null = null;
+      let bestScore = 0;
+      const all = Array.from(document.querySelectorAll<HTMLElement>('*'));
+      for (const el of all) {
+        const cs = getComputedStyle(el);
+        const oy = cs.overflowY;
+        const ox = cs.overflow;
+        const scrollable = oy === 'auto' || oy === 'scroll' || ox === 'auto' || ox === 'scroll';
+        if (!scrollable) continue;
+        const diff = el.scrollHeight - el.clientHeight;
+        if (diff < 50) continue;
+        const score = el.clientHeight * diff;
+        if (score > bestScore) {
+          bestScore = score;
+          best = el;
+        }
+      }
+      if (best) {
+        return {
+          scrollY: best.scrollTop,
+          visualViewportHeight: best.clientHeight,
+          scrollHeight: best.scrollHeight,
+        };
+      }
       return {
-        scrollY: scrollY,
-        visualViewportHeight: visualViewportHeight,
-        scrollHeight: scrollHeight,
+        scrollY: window.scrollY,
+        visualViewportHeight: winH,
+        scrollHeight: docEl?.scrollHeight ?? winH,
       };
     },
   });

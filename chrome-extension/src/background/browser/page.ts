@@ -598,15 +598,37 @@ export default class Page {
       throw new Error('Puppeteer is not connected');
     }
     if (!elementNode) {
+      // SPA-aware: if the document itself isn't the scroller, find the largest scrollable
+      // descendant and scroll that instead. Same heuristic as getScrollInfo.
       await this._puppeteerPage.evaluate(yPercent => {
-        const scrollHeight = document.documentElement.scrollHeight;
-        const viewportHeight = window.visualViewport?.height || window.innerHeight;
-        const scrollTop = (scrollHeight - viewportHeight) * (yPercent / 100);
-        window.scrollTo({
-          top: scrollTop,
-          left: window.scrollX,
-          behavior: 'smooth',
-        });
+        const winH = window.visualViewport?.height || window.innerHeight;
+        const docEl = document.scrollingElement || document.documentElement;
+        if (docEl && docEl.scrollHeight > winH + 4) {
+          const top = (docEl.scrollHeight - winH) * (yPercent / 100);
+          window.scrollTo({ top, left: window.scrollX, behavior: 'smooth' });
+          return;
+        }
+        let best: Element | null = null;
+        let bestScore = 0;
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
+          const cs = getComputedStyle(el);
+          const oy = cs.overflowY;
+          const ox = cs.overflow;
+          if (oy !== 'auto' && oy !== 'scroll' && ox !== 'auto' && ox !== 'scroll') continue;
+          const diff = el.scrollHeight - el.clientHeight;
+          if (diff < 50) continue;
+          const score = el.clientHeight * diff;
+          if (score > bestScore) {
+            bestScore = score;
+            best = el;
+          }
+        }
+        if (best) {
+          const top = (best.scrollHeight - best.clientHeight) * (yPercent / 100);
+          best.scrollTo({ top, left: best.scrollLeft, behavior: 'smooth' });
+        } else {
+          window.scrollTo({ top: 0, left: window.scrollX, behavior: 'smooth' });
+        }
       }, yPercent);
     } else {
       const element = await this.locateElement(elementNode);
@@ -672,8 +694,32 @@ export default class Page {
     }
 
     if (!elementNode) {
-      // Scroll the whole page up by viewport height
-      await this._puppeteerPage.evaluate('window.scrollBy(0, -(window.visualViewport?.height || window.innerHeight));');
+      // SPA-aware: scroll the document if it's scrollable, otherwise scroll the main inner container.
+      await this._puppeteerPage.evaluate(() => {
+        const winH = window.visualViewport?.height || window.innerHeight;
+        const docEl = document.scrollingElement || document.documentElement;
+        if (docEl && docEl.scrollHeight > winH + 4) {
+          window.scrollBy(0, -winH);
+          return;
+        }
+        let best: Element | null = null;
+        let bestScore = 0;
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
+          const cs = getComputedStyle(el);
+          const oy = cs.overflowY;
+          const ox = cs.overflow;
+          if (oy !== 'auto' && oy !== 'scroll' && ox !== 'auto' && ox !== 'scroll') continue;
+          const diff = el.scrollHeight - el.clientHeight;
+          if (diff < 50) continue;
+          const score = el.clientHeight * diff;
+          if (score > bestScore) {
+            bestScore = score;
+            best = el;
+          }
+        }
+        if (best) best.scrollBy(0, -best.clientHeight);
+        else window.scrollBy(0, -winH);
+      });
     } else {
       // Scroll the specific element up by its client height
       const element = await this.locateElement(elementNode);
@@ -699,8 +745,32 @@ export default class Page {
     }
 
     if (!elementNode) {
-      // Scroll the whole page down by viewport height
-      await this._puppeteerPage.evaluate('window.scrollBy(0, (window.visualViewport?.height || window.innerHeight));');
+      // SPA-aware: scroll the document if it's scrollable, otherwise scroll the main inner container.
+      await this._puppeteerPage.evaluate(() => {
+        const winH = window.visualViewport?.height || window.innerHeight;
+        const docEl = document.scrollingElement || document.documentElement;
+        if (docEl && docEl.scrollHeight > winH + 4) {
+          window.scrollBy(0, winH);
+          return;
+        }
+        let best: Element | null = null;
+        let bestScore = 0;
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
+          const cs = getComputedStyle(el);
+          const oy = cs.overflowY;
+          const ox = cs.overflow;
+          if (oy !== 'auto' && oy !== 'scroll' && ox !== 'auto' && ox !== 'scroll') continue;
+          const diff = el.scrollHeight - el.clientHeight;
+          if (diff < 50) continue;
+          const score = el.clientHeight * diff;
+          if (score > bestScore) {
+            bestScore = score;
+            best = el;
+          }
+        }
+        if (best) best.scrollBy(0, best.clientHeight);
+        else window.scrollBy(0, winH);
+      });
     } else {
       // Scroll the specific element down by its client height
       const element = await this.locateElement(elementNode);
