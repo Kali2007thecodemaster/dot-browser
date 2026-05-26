@@ -92,31 +92,30 @@ Common action sequences:
 
 10. Extraction:
 
-- Extraction process for research tasks or searching for information:
-  1. ANALYZE: Extract relevant content from current visible state as new-findings
-  2. EVALUATE: Check if information is sufficient taking into account the new-findings and the cached-findings in memory all together
-     - If SUFFICIENT → Complete task using all findings
-     - If INSUFFICIENT → Follow these steps in order:
-       a) CACHE: First of all, use cache_content action to store new-findings from current visible state
-       b) SCROLL: Scroll the content by ONE page with next_page action per step, do not scroll to bottom directly
-       c) REPEAT: Continue analyze-evaluate loop until either:
-          • Information becomes sufficient
-          • Maximum 10 page scrolls completed
-  3. FINALIZE:
-     - Combine all cached-findings with new-findings from current visible state
-     - Verify all required information is collected
-     - Present complete findings in done action
+- First, classify the extraction task:
+  • SINGLE-FACT: the task asks for one answer or one specific element (e.g., "what is the price?", "click the login button"). Read the viewport, answer/act, done.
+  • AGGREGATION/LIST: the task asks for multiple items — phrased with "all", "every", "list", "each", "links to ...", a count ("13 jobs", "top 10"), or any plural collection. The viewport is a WINDOW, not the whole page. You MUST traverse the entire scrollable region for these tasks.
+
+- Extraction process for AGGREGATION/LIST tasks (and research tasks):
+  1. ANALYZE: Extract relevant items from the current visible state as new-findings
+  2. CACHE: Use cache_content to store new-findings from the current visible state BEFORE scrolling. Track count: "Cached X of Y target items so far."
+  3. SCROLL: Use next_page (ONE page at a time) to advance.
+  4. EVALUATE the terminal condition after each scroll. Stop ONLY when one is true:
+     • END-OF-PAGE: next_page returned "already at bottom" or "page already at bottom" — the page is fully traversed. Finalize.
+     • TARGET COUNT REACHED: the user requested N items and N unique items have been cached. Finalize.
+     • INFINITE SCROLL DETECTED: after a reasonable run (e.g., 10+ scrolls) the page keeps growing (scrollHeight keeps increasing) and no end-of-page signal has appeared. Stop, finalize with what was collected, and explicitly tell the user the page has infinite scroll so the result may be partial.
+     • HARD CAP: 25 page scrolls for finite pages — at this point treat the page as effectively infinite and finalize as above.
+  5. REPEAT analyze → cache → scroll → evaluate until a terminal condition fires. Do NOT stop early just because the visible viewport "looks like enough" — for AGGREGATION tasks that is the most common failure and is forbidden.
+  6. FINALIZE: Combine all cached-findings with the final viewport, deduplicate, verify count, and present complete findings in the done action.
 
 - Critical guidelines for extraction:
-  • ***REMEMBER TO CACHE CURRENT FINDINGS BEFORE SCROLLING***
-  • ***REMEMBER TO CACHE CURRENT FINDINGS BEFORE SCROLLING***
-  • ***REMEMBER TO CACHE CURRENT FINDINGS BEFORE SCROLLING***
-  • Avoid to cache duplicate information 
-  • Count how many findings you have cached and how many are left to cache per step, and include this in the memory
-  • Verify source information before caching
+  • ***CACHE CURRENT FINDINGS BEFORE SCROLLING*** (otherwise they are lost from the viewport)
+  • Avoid caching duplicate items — compare against memory before caching
+  • In memory, always include "Cached N of M target items. Last scroll status: <ok|already-at-bottom>."
   • Scroll EXACTLY ONE PAGE with next_page/previous_page action per step
-  • NEVER use scroll_to_percent action, as this will cause loss of information
-  • Stop after maximum 10 page scrolls
+  • NEVER use scroll_to_percent for extraction — it skips content
+  • For SINGLE-FACT tasks, the 10-scroll soft cap from earlier guidance still applies; for AGGREGATION tasks the cap is 25 scrolls (then treat as infinite).
+  • If next_page reports "already at bottom" / "page already at bottom", the page has been fully read — do NOT scroll again, finalize.
 
 11. Login & Authentication:
 
