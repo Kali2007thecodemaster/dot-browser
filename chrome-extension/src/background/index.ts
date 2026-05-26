@@ -281,23 +281,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
-  if (message.type === 'notion_test_connection') {
-    // Validate a candidate token by calling Notion's /users/me. We accept the token
-    // as a request argument (not from storage) so the options page can test BEFORE
-    // persisting. The client never logs the token; the response surface is just
-    // { ok, workspace, bot } or { ok: false, error }.
-    (async () => {
-      try {
-        const { notionClient } = await import('./services/notion');
-        const result = await notionClient.testConnection(message.token);
-        sendResponse({ ok: true, workspace: result.workspace, bot: result.bot });
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        sendResponse({ ok: false, error: errorMessage });
-      }
-    })();
-    return true; // async response
-  }
   return false;
 });
 
@@ -372,6 +355,18 @@ chrome.runtime.onConnect.addListener(port => {
           case 'pause_task': {
             if (!currentExecutor) return port.postMessage({ type: 'error', error: t('bg_errors_noRunningTask') });
             await currentExecutor.pause();
+            return port.postMessage({ type: 'success' });
+          }
+
+          case 'interject_and_resume': {
+            // Inject a user clarification into the running task's message history,
+            // then unblock the executor loop. Same Executor instance — task goal
+            // and prior progress are preserved.
+            if (!currentExecutor) return port.postMessage({ type: 'error', error: t('bg_errors_noRunningTask') });
+            if (typeof message.text === 'string' && message.text.trim()) {
+              currentExecutor.addInterjection(message.text);
+            }
+            await currentExecutor.resume();
             return port.postMessage({ type: 'success' });
           }
 

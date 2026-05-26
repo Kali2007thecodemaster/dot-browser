@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { FaMicrophone } from 'react-icons/fa';
 import { AiOutlineLoading3Quarters } from 'react-icons/ai';
 import { t } from '@extension/i18n';
+import { uploadStore } from '@extension/storage';
 import FileUpload, { type FileUploadHandle, type UploadedFileData } from './FileUpload';
 import FileChip from './FileChip';
 
@@ -17,6 +18,12 @@ interface ChatInputProps {
   isDarkMode?: boolean;
   historicalSessionId?: string | null;
   onReplay?: (sessionId: string) => void;
+  /** Pause the running task. Shown alongside Stop when a task is in flight. */
+  onPauseTask?: () => void;
+  /** True while the user has paused the task; input becomes editable. */
+  isPaused?: boolean;
+  /** Resume without an interjection (just continue). */
+  onResumeTask?: () => void;
 }
 
 export default function ChatInput({
@@ -30,6 +37,9 @@ export default function ChatInput({
   setContent,
   historicalSessionId,
   onReplay,
+  onPauseTask,
+  isPaused = false,
+  onResumeTask,
 }: ChatInputProps) {
   const [text, setText] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<UploadedFileData[]>([]);
@@ -66,7 +76,7 @@ export default function ChatInput({
   }, []);
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
       const trimmedText = text.trim();
       if (!trimmedText && attachedFiles.length === 0) return;
@@ -75,13 +85,40 @@ export default function ChatInput({
       let displayContent = trimmedText;
 
       if (attachedFiles.length > 0) {
-        const fileContents = attachedFiles
-          .map(f => `\n\n<nano_file_content type="file" name="${f.name}">\n${f.content}\n</nano_file_content>`)
+        // Persist each attached file to uploadStore so the agent's
+        // list_uploaded_files / read_uploaded_file actions can find them. The
+        // store generates a fresh stable ID per file; we use that ID in the
+        // inlined <nano_file_content> tag so the LLM sees and can reuse it
+        // directly when calling read_uploaded_file.
+        const persisted: Array<{ id: string; name: string; content: string }> = [];
+        for (const f of attachedFiles) {
+          try {
+            const saved = await uploadStore.addFile({
+              name: f.name,
+              type: f.type,
+              content: f.content,
+              size: f.size,
+            });
+            persisted.push({ id: saved.id, name: saved.name, content: saved.content });
+          } catch (err) {
+            // Hit the per-file or total size cap. Fall back to inlining only —
+            // the agent loses the action path but still sees the content in
+            // the message body.
+            console.error('uploadStore.addFile failed', err);
+            persisted.push({ id: f.id, name: f.name, content: f.content });
+          }
+        }
+
+        const fileContents = persisted
+          .map(
+            f =>
+              `\n\n<nano_file_content type="file" id="${f.id}" name="${f.name}">\n${f.content}\n</nano_file_content>`,
+          )
           .join('\n');
         messageContent = trimmedText
           ? `${trimmedText}\n\n<nano_attached_files>${fileContents}</nano_attached_files>`
           : `<nano_attached_files>${fileContents}</nano_attached_files>`;
-        const fileList = attachedFiles.map(f => `· ${f.name}`).join('\n');
+        const fileList = persisted.map(f => `· ${f.name}`).join('\n');
         displayContent = trimmedText ? `${trimmedText}\n\n${fileList}` : fileList;
       }
 
@@ -160,16 +197,22 @@ export default function ChatInput({
         aria-label={t('chat_input_form')}>
         <div className="flex items-end gap-2 p-2.5">
           {/* Attach button (FileUpload renders the 📎 button + hidden input) */}
-          <FileUpload ref={fileUploadRef} onFileAdded={handleFileAdded} onError={handleFileError} disabled={disabled} />
+          <FileUpload
+            ref={fileUploadRef}
+            onFileAdded={handleFileAdded}
+            onError={handleFileError}
+            disabled={disabled && !isPaused}
+          />
 
-          {/* Textarea */}
+          {/* Textarea — usable when normally enabled OR when the task is paused
+              and we're inviting an interjection. */}
           <textarea
             ref={textareaRef}
             value={text}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
-            disabled={disabled}
-            aria-disabled={disabled}
+            disabled={disabled && !isPaused}
+            aria-disabled={disabled && !isPaused}
             rows={1}
             className="min-w-0 flex-1 resize-none border-none bg-transparent focus:outline-none"
             style={{
@@ -178,10 +221,16 @@ export default function ChatInput({
               lineHeight: 1.55,
               color: 'var(--text)',
               padding: '7px 4px',
-              opacity: disabled ? 0.5 : 1,
-              cursor: disabled ? 'not-allowed' : 'text',
+              opacity: disabled && !isPaused ? 0.5 : 1,
+              cursor: disabled && !isPaused ? 'not-allowed' : 'text',
             }}
-            placeholder={attachedFiles.length > 0 ? 'Add a message (optional)...' : t('chat_input_placeholder')}
+            placeholder={
+              isPaused
+                ? 'Paused — add a clarification, then press send to resume'
+                : attachedFiles.length > 0
+                  ? 'Add a message (optional)...'
+                  : t('chat_input_placeholder')
+            }
             aria-label={t('chat_input_editor')}
           />
 
@@ -214,20 +263,78 @@ export default function ChatInput({
             </button>
           )}
 
-          {/* Stop / Replay / Send */}
-          {showStopButton ? (
-            <button
-              type="button"
-              onClick={onStopTask}
-              className="btn-icon-md"
-              style={{
-                background: 'var(--accent)',
-                color: 'var(--bg)',
-                cursor: 'pointer',
-                fontSize: 12,
-              }}>
-              ■
-            </button>
+          {/* Right-side controls — different layouts for each state:
+              - Paused:   [▶ resume-now] [→ send-and-resume]
+              - Running:  [‖ pause]      [■ stop]
+              - Historical session: [↺ replay]
+              - Idle:                    [→ send] */}
+          {isPaused ? (
+            <>
+              <button
+                type="button"
+                onClick={onResumeTask}
+                title="Resume without adding a message"
+                aria-label="Resume task"
+                className="btn-icon-md"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--line)',
+                  color: 'var(--muted)',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                }}>
+                ▶
+              </button>
+              <button
+                type="submit"
+                disabled={isSendButtonDisabled}
+                aria-disabled={isSendButtonDisabled}
+                title="Send clarification and resume"
+                aria-label="Send and resume"
+                className="btn-icon-md"
+                style={{
+                  background: isSendButtonDisabled ? 'var(--muted)' : 'var(--accent)',
+                  color: 'var(--bg)',
+                  cursor: isSendButtonDisabled ? 'not-allowed' : 'pointer',
+                  fontSize: 18,
+                }}>
+                →
+              </button>
+            </>
+          ) : showStopButton ? (
+            <>
+              {onPauseTask && (
+                <button
+                  type="button"
+                  onClick={onPauseTask}
+                  title="Pause to add a clarification"
+                  aria-label="Pause task"
+                  className="btn-icon-md"
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid var(--line)',
+                    color: 'var(--muted)',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                  }}>
+                  ‖
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onStopTask}
+                title="Stop task"
+                aria-label="Stop task"
+                className="btn-icon-md"
+                style={{
+                  background: 'var(--accent)',
+                  color: 'var(--bg)',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}>
+                ■
+              </button>
+            </>
           ) : historicalSessionId ? (
             <button
               type="button"

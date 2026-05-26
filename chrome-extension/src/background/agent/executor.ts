@@ -23,56 +23,8 @@ import {
 import { URLNotAllowedError } from '../browser/views';
 import { chatHistoryStore } from '@extension/storage/lib/chat';
 import type { AgentStepHistory } from './history';
-import type { GeneralSettingsConfig, NotionConfig } from '@extension/storage';
-import { notionStore } from '@extension/storage';
+import type { GeneralSettingsConfig } from '@extension/storage';
 import { analytics } from '../services/analytics';
-
-/**
- * Build the long-term-memory hint that primes the planner about Notion.
- * Returns an empty string when the user hasn't connected Notion OR hasn't pinned any
- * databases — in that case there's nothing useful to recall from.
- */
-function buildNotionMemoryHint(config: NotionConfig): string {
-  if (!config.apiToken) return '';
-  if (config.pinnedDatabases.length === 0) {
-    // Token is configured but no pins — let the LLM know it can still use
-    // notion_search but there is no name-resolvable memory yet.
-    return [
-      '# Notion long-term memory',
-      '',
-      'The user has connected Notion but has not pinned any databases yet.',
-      'You can still call `notion_search` to discover what the integration has access to,',
-      'and `notion_create_database` to spin up a new structured memory store under a page',
-      'the integration can see. Suggest pinning the new database (Settings -> Notion) so',
-      'future sessions can resolve it by name.',
-    ].join('\n');
-  }
-  const pinList = config.pinnedDatabases
-    .map(p => `- "${p.name}"${p.description ? ` — ${p.description}` : ''}`)
-    .join('\n');
-  const writePolicy = config.autoWrite
-    ? 'The user has set autoWrite=ON — write to Notion automatically when the task calls for it; do NOT ask first.'
-    : 'The user has set autoWrite=OFF — use `human_interrupt` to confirm BEFORE any notion_create_page / notion_update_page / notion_archive_* call.';
-  return [
-    '# Notion long-term memory',
-    '',
-    'You have access to the following pinned Notion databases (resolve names via `notion_get_pinned_db`):',
-    '',
-    pinList,
-    '',
-    '## When to use Notion',
-    '',
-    '1. **Recall first**: when the user asks anything that overlaps a pinned database (e.g. asking about jobs while a "Job Tracker" pin exists), call `notion_query_database` BEFORE answering from general knowledge.',
-    '2. **Schema before write**: call `notion_get_database` before any create/update so you know the exact column names and types.',
-    '3. **Log when relevant**: when the agent does work that produces a "rememberable" artifact (a new job, a contact, a paper) and a related pinned database exists, propose adding a row.',
-    '',
-    `## Write policy`,
-    '',
-    writePolicy,
-    '',
-    "If a user request has no relevant pinned database, treat Notion as just another tool — don't force it in.",
-  ].join('\n');
-}
 
 const logger = createLogger('Executor');
 
@@ -91,8 +43,6 @@ export class Executor {
   private readonly navigatorPrompt: NavigatorPrompt;
   private readonly generalSettings: GeneralSettingsConfig | undefined;
   private tasks: string[] = [];
-  /** Has the Notion-memory hint been injected for this executor's session? */
-  private notionHintAdded = false;
   constructor(
     task: string,
     taskId: string,
@@ -157,6 +107,25 @@ export class Executor {
   }
 
   /**
+   * Inject a user clarification mid-task without changing the task goal.
+   *
+   * Unlike addFollowUpTask, this keeps the same task active. The text is added
+   * as a HumanMessage so the next planner / navigator step sees it as fresh
+   * guidance. Action results are NOT reset — we're refining ongoing work, not
+   * starting over.
+   *
+   * Typical flow: user clicks Pause → types "skip LinkedIn for this run" →
+   * clicks Resume → executor.resume() unblocks the loop and the next step
+   * processes the new instruction.
+   */
+  addInterjection(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const tagged = `[User interjection]: ${trimmed}`;
+    this.context.messageManager.addNewTask(tagged);
+  }
+
+  /**
    * Check if task is complete based on planner output and handle completion
    */
   private checkTaskCompletion(planOutput: AgentOutput<PlannerOutput> | null): boolean {
@@ -184,10 +153,6 @@ export class Executor {
     const context = this.context;
     context.nSteps = 0;
     context.finalAnswer = null;
-    // Inject Notion-memory hint once per Executor session (covers the first task plus
-    // any follow-up tasks). Re-fetched each time the executor is constructed, so
-    // settings changes between sessions propagate.
-    await this.maybeAddNotionMemoryHint();
     const allowedMaxSteps = this.context.options.maxSteps;
 
     try {
@@ -430,26 +395,6 @@ export class Executor {
 
   async pause(): Promise<void> {
     this.context.pause();
-  }
-
-  /**
-   * Read the user's Notion config and inject the memory hint into the planner's
-   * init bundle. No-op when Notion isn't connected or the hint has already been added.
-   * Failures are swallowed (memory is best-effort — must never block a task).
-   */
-  private async maybeAddNotionMemoryHint(): Promise<void> {
-    if (this.notionHintAdded) return;
-    this.notionHintAdded = true; // guard against retries even on failure
-    try {
-      const config = await notionStore.getConfig();
-      const hint = buildNotionMemoryHint(config);
-      if (hint) {
-        this.context.messageManager.addNotionMemoryHint(hint);
-        logger.info('Injected Notion memory hint', { pinCount: config.pinnedDatabases.length });
-      }
-    } catch (e) {
-      logger.warning('Failed to inject Notion memory hint', e);
-    }
   }
 
   async cleanup(): Promise<void> {

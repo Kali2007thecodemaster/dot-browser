@@ -53,6 +53,7 @@ const SidePanel = () => {
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [chatSessions, setChatSessions] = useState<Array<{ id: string; title: string; createdAt: number }>>([]);
   const [isFollowUpMode, setIsFollowUpMode] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isHistoricalSession, setIsHistoricalSession] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
   // Boot screen removed — the side panel opens straight into chat. setup_executor
@@ -758,7 +759,19 @@ const SidePanel = () => {
       }
 
       // Send message using the utility function
-      if (isFollowUpMode) {
+      if (isPaused) {
+        // Paused mid-task — inject the user's clarification into the active
+        // task's message history and resume from where the agent left off.
+        // Task goal and prior progress are preserved.
+        await sendMessage({
+          type: 'interject_and_resume',
+          text: taskWithContext,
+        });
+        setIsPaused(false);
+        setInputEnabled(false);
+        setShowStopButton(true);
+        console.log('interject_and_resume sent', taskWithContext);
+      } else if (isFollowUpMode) {
         // Send as follow-up task
         await sendMessage({
           type: 'follow_up_task',
@@ -807,6 +820,31 @@ const SidePanel = () => {
     }
     setInputEnabled(true);
     setShowStopButton(false);
+    setIsPaused(false);
+  };
+
+  /** Pause the active task. The agent stops between steps and waits for resume. */
+  const handlePauseTask = async () => {
+    try {
+      portRef.current?.postMessage({ type: 'pause_task' });
+      setIsPaused(true);
+      // Keep showStopButton true (task is still active), but enable the input so
+      // the user can type a clarification.
+      setInputEnabled(true);
+    } catch (err) {
+      console.error('pause_task error', err);
+    }
+  };
+
+  /** Resume the paused task without any new instruction. */
+  const handleResumeTask = async () => {
+    try {
+      portRef.current?.postMessage({ type: 'resume_task' });
+      setIsPaused(false);
+      setInputEnabled(false);
+    } catch (err) {
+      console.error('resume_task error', err);
+    }
   };
 
   const handleNewChat = () => {
@@ -818,6 +856,7 @@ const SidePanel = () => {
     setShowStopButton(false);
     setIsFollowUpMode(false);
     setIsHistoricalSession(false);
+    setIsPaused(false);
 
     // Disconnect any existing connection
     stopConnection();
@@ -1235,6 +1274,9 @@ const SidePanel = () => {
                       <ChatInput
                         onSendMessage={handleSendMessage}
                         onStopTask={handleStopTask}
+                        onPauseTask={handlePauseTask}
+                        onResumeTask={handleResumeTask}
+                        isPaused={isPaused}
                         onMicClick={handleMicClick}
                         isRecording={isRecording}
                         isProcessingSpeech={isProcessingSpeech}
@@ -1302,6 +1344,9 @@ const SidePanel = () => {
                     <ChatInput
                       onSendMessage={handleSendMessage}
                       onStopTask={handleStopTask}
+                      onPauseTask={handlePauseTask}
+                      onResumeTask={handleResumeTask}
+                      isPaused={isPaused}
                       onMicClick={handleMicClick}
                       isRecording={isRecording}
                       isProcessingSpeech={isProcessingSpeech}
