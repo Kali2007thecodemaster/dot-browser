@@ -178,15 +178,15 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
             }
           }
 
-          // Parse failed silently — retry once with the JSON-only hint before giving up.
+          // Parse failed silently — retry once with the JSON-only hint, then fall through to plain-invoke.
           if (attempt === 0) {
             logger.warning(
               `[${this.modelName}] Structured output unparseable on first attempt, retrying with JSON-only hint`,
             );
             continue;
           }
-          logger.error('Failed to parse response', response);
-          throw new Error('Could not parse response with structured output');
+          logger.warning(`[${this.modelName}] Structured output failed twice, falling back to plain JSON extraction`);
+          break;
         } catch (error) {
           if (isAbortedError(error)) {
             throw error;
@@ -209,12 +209,46 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
             );
             continue;
           }
-          logger.error(`[${this.modelName}] LLM call failed with error: \n${errorMessage}`);
-          throw new Error(`Failed to invoke ${this.modelName} with structured output: \n${errorMessage}`);
+          logger.warning(
+            `[${this.modelName}] Structured output threw twice, falling back to plain JSON extraction: ${errorMessage}`,
+          );
+          break;
         }
       }
-      // Unreachable — loop either returns or throws — but TS needs an explicit exit.
-      throw new Error(`Failed to invoke ${this.modelName} with structured output: exhausted retries`);
+
+      // Final fallback: bypass structured output and ask for plain JSON. Same idea as the
+      // navigator's fallback — Gemini and some local models choke on complex schemas but
+      // happily emit JSON as text.
+      try {
+        const fallbackMessages = [
+          ...inputMessages,
+          new HumanMessage(
+            'Respond with a single VALID JSON object matching the schema. Output ONLY the JSON, no markdown fences, no prose, no preamble.',
+          ),
+        ];
+        const converted = convertInputMessages(fallbackMessages, this.modelName);
+        const plainResponse = await this.chatLLM.invoke(converted, {
+          signal: this.context.controller.signal,
+          ...this.callOptions,
+        });
+        if (typeof plainResponse.content === 'string') {
+          const parsed = this.manuallyParseResponse(plainResponse.content);
+          if (parsed) {
+            logger.info(`[${this.modelName}] Recovered via plain-invoke fallback`);
+            return parsed;
+          }
+        }
+      } catch (fallbackError) {
+        if (isAbortedError(fallbackError)) {
+          throw fallbackError;
+        }
+        logger.warning(
+          `[${this.modelName}] Plain-invoke fallback also failed: ${
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          }`,
+        );
+      }
+      throw new ResponseParseError('Could not parse response after structured + plain-invoke attempts');
     }
 
     // Fallback: Without structured output support, need to extract JSON from model output manually

@@ -23,6 +23,7 @@ import {
   RequestCancelledError,
   sanitizeErrorForChat,
 } from './errors';
+import { convertInputMessages } from '../messages/utils';
 import { calcBranchPathHashSet } from '@src/background/browser/dom/views';
 import { type BrowserState, BrowserStateHistory, URLNotAllowedError } from '@src/background/browser/views';
 import { convertZodToJsonSchema, repairJsonString } from '@src/background/utils';
@@ -191,7 +192,46 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
           logger.warning('Navigator response unparseable on first attempt, retrying with JSON-only hint');
           continue;
         }
-        throw new ResponseParseError('Could not parse navigator response');
+        // Fall through to the unstructured fallback below.
+      }
+
+      // Final fallback: bypass structured output entirely and ask the model for plain JSON.
+      // Some providers (notably Gemini Flash) silently choke on the union-typed action
+      // schema and return empty content / malformed tool calls. Going non-structured lets
+      // the model emit JSON as text, which our manual extractor can handle.
+      logger.warning(
+        `Navigator structured output failed twice on ${this.modelName}, falling back to plain JSON extraction`,
+      );
+      try {
+        const fallbackMessages = [
+          ...inputMessages,
+          new HumanMessage(
+            'Respond with a single VALID JSON object matching the navigator schema: ' +
+              '{"current_state": {...}, "action": [{...}, ...]}. ' +
+              'Output ONLY the JSON, no markdown fences, no prose, no preamble.',
+          ),
+        ];
+        const converted = convertInputMessages(fallbackMessages, this.modelName);
+        const plainResponse = await this.chatLLM.invoke(converted, {
+          signal: this.context.controller.signal,
+          ...this.callOptions,
+        });
+        if (typeof plainResponse.content === 'string') {
+          const parsed = this.manuallyParseResponse(plainResponse.content);
+          if (parsed) {
+            logger.info('Navigator recovered via plain-invoke fallback');
+            return parsed;
+          }
+        }
+      } catch (fallbackError) {
+        if (isAbortedError(fallbackError)) {
+          throw fallbackError;
+        }
+        logger.warning(
+          `Navigator plain-invoke fallback also failed: ${
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          }`,
+        );
       }
       throw new ResponseParseError('Could not parse navigator response');
     }
